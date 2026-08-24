@@ -1,0 +1,9 @@
+{
+  "id": "drag-and-drop-lists",
+  "name": "Drag and Drop Lists",
+  "version": "0.5.1",
+  "minAppVersion": "1.0.0",
+  "description": "Reorder list items by dragging their checkboxes or list markers.",
+  "author": "Ben Hancock",
+  "isDesktopOnly": false
+}
