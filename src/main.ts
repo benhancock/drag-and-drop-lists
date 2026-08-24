@@ -20,7 +20,7 @@ import {
 	moveListBlock,
 	parseListLine,
 } from "./list-model";
-import { calculateRowDeltas } from "./row-transition";
+import { calculateGhostLanding, calculateRowDeltas, type GhostLanding } from "./row-transition";
 
 const PLUGIN_ID = "drag-and-drop-lists";
 const TASK_HANDLE_SELECTOR = ".task-list-label";
@@ -29,6 +29,7 @@ const CONTINUATION_HANDLE_SELECTOR = ".HyperMD-list-line-nobullet .cm-hmd-list-i
 const HANDLE_SELECTOR = `${TASK_HANDLE_SELECTOR}, .cm-formatting-list, ${QUOTE_HANDLE_SELECTOR}, ${CONTINUATION_HANDLE_SELECTOR}`;
 const LIST_LINE_SELECTOR = ".HyperMD-list-line.cm-line, .HyperMD-quote.cm-line";
 const ROW_TRANSITION_DURATION_MS = 160;
+const GHOST_LANDING_DURATION_MS = 210;
 interface DropTarget {
 	block: ListBlock;
 	line: number;
@@ -74,11 +75,22 @@ interface PendingRowTransition {
 	originalLineIndexes: number[];
 	movingStart: number;
 	movingEnd: number;
+	destinationLineIndex: number;
+	ghost: HTMLElement | null;
 }
 
 interface MeasuredRowTransition {
 	element: HTMLElement;
 	deltaY: number;
+}
+
+interface MeasuredGhostTransition extends GhostLanding {
+	element: HTMLElement;
+}
+
+interface MeasuredDropTransition {
+	rows: MeasuredRowTransition[];
+	ghost: MeasuredGhostTransition | null;
 }
 
 const setSource = StateEffect.define<ListBlock | null>();
@@ -172,14 +184,14 @@ function applyEditorMove(
 	side: "before" | "after",
 	cursorPlacement: CursorPlacement,
 	beforeTransaction?: (result: MoveResult) => void,
-): void {
+): boolean {
 	const originalLines = editor.getValue().split("\n");
 	const result = moveListBlock(originalLines, source, target, side);
-	if (!result) return;
+	if (!result) return false;
 	let firstChangedLine = 0;
 	while (firstChangedLine < originalLines.length
 		&& originalLines[firstChangedLine] === result.lines[firstChangedLine]) firstChangedLine += 1;
-	if (firstChangedLine >= originalLines.length) return;
+	if (firstChangedLine >= originalLines.length) return false;
 	let lastChangedLine = originalLines.length - 1;
 	while (lastChangedLine > firstChangedLine
 		&& originalLines[lastChangedLine] === result.lines[lastChangedLine]) lastChangedLine -= 1;
@@ -196,6 +208,7 @@ function applyEditorMove(
 		}],
 		selection: { from: { line: result.insertionIndex, ch: cursorCh } },
 	}, PLUGIN_ID);
+	return true;
 }
 
 class DragController implements PluginValue {
@@ -209,6 +222,7 @@ class DragController implements PluginValue {
 	private pendingRowTransition: PendingRowTransition | null = null;
 	private readonly exitingGhosts = new Set<HTMLElement>();
 	private readonly ghostExitTimers = new Set<number>();
+	private readonly ghostLandingAnimations = new Map<HTMLElement, Animation>();
 	private readonly rowAnimations = new Map<HTMLElement, Animation>();
 	private readonly eventDocument: Document;
 	private readonly viewWindow: Window;
@@ -362,11 +376,12 @@ class DragController implements PluginValue {
 		event.stopPropagation();
 		const target = this.getTargetAtPoint(event.clientX, event.clientY);
 		if (target) {
-			// Keep the preview alive long enough to fade out when the editor transaction
-			// synchronously triggers an update and clears the active drag state.
+			// Detach the preview from active drag cleanup so it can land after CodeMirror
+			// renders the moved row at its new document position.
 			this.context = null;
-			this.removeGhost(context.ghost, true);
-			this.commitMove(context.source, target);
+			if (!this.commitMove(context.source, target, context.ghost)) {
+				this.removeGhost(context.ghost, true);
+			}
 		}
 		this.suppressClickUntil = Date.now() + 500;
 		this.cleanup();
@@ -515,17 +530,17 @@ class DragController implements PluginValue {
 		};
 	}
 
-	private commitMove(source: ListBlock, target: DropTarget): void {
+	private commitMove(source: ListBlock, target: DropTarget, ghost: HTMLElement): boolean {
 		const info = this.view.state.field(editorInfoField, false);
 		const editor = info?.editor;
-		if (!editor) return;
-		applyEditorMove(
+		if (!editor) return false;
+		return applyEditorMove(
 			editor,
 			source,
 			target.block,
 			target.side,
 			this.getSettings().cursorPlacement,
-			(result) => { this.prepareRowTransition(source, result); },
+			(result) => { this.prepareRowTransition(source, result, ghost); },
 		);
 	}
 
@@ -542,10 +557,13 @@ class DragController implements PluginValue {
 		return rows;
 	}
 
-	private prepareRowTransition(source: ListBlock, result: MoveResult): void {
+	private prepareRowTransition(source: ListBlock, result: MoveResult, ghost: HTMLElement | null): void {
 		this.pendingRowTransition = null;
 		this.cancelRowAnimations();
-		if (this.viewWindow.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+		if (this.viewWindow.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+			ghost?.remove();
+			return;
+		}
 		const scrollTop = this.view.scrollDOM.scrollTop;
 		const oldTops = new Map<number, number>();
 		for (const [lineIndex, row] of this.visibleRows(this.view)) {
@@ -556,19 +574,21 @@ class DragController implements PluginValue {
 			originalLineIndexes: result.originalLineIndexes,
 			movingStart: source.start - 1,
 			movingEnd: source.end - 1,
+			destinationLineIndex: result.insertionIndex,
+			ghost,
 		};
 	}
 
 	private scheduleRowTransition(transition: PendingRowTransition): void {
 		this.view.requestMeasure({
-			read: (view): MeasuredRowTransition[] => {
+			read: (view): MeasuredDropTransition => {
 				const rows = this.visibleRows(view);
 				const scrollTop = view.scrollDOM.scrollTop;
 				const newTops = new Map<number, number>();
 				for (const [lineIndex, row] of rows) {
 					newTops.set(lineIndex, row.getBoundingClientRect().top + scrollTop);
 				}
-				return calculateRowDeltas(
+				const rowTransitions = calculateRowDeltas(
 					transition.oldTops,
 					newTops,
 					transition.originalLineIndexes,
@@ -578,8 +598,25 @@ class DragController implements PluginValue {
 					const element = rows.get(newLineIndex);
 					return element ? [{ element, deltaY }] : [];
 				});
+				const destination = rows.get(transition.destinationLineIndex);
+				const ghost = transition.ghost;
+				let ghostTransition: MeasuredGhostTransition | null = null;
+				if (ghost?.isConnected && destination) {
+					ghostTransition = Object.assign(
+						{ element: ghost },
+						calculateGhostLanding(
+							ghost.getBoundingClientRect(),
+							destination.getBoundingClientRect(),
+						),
+					);
+				}
+				return { rows: rowTransitions, ghost: ghostTransition };
 			},
-			write: (measurements): void => { this.animateRows(measurements); },
+			write: (measurement): void => {
+				this.animateRows(measurement.rows);
+				if (measurement.ghost) this.animateGhostLanding(measurement.ghost);
+				else if (transition.ghost) this.removeGhost(transition.ghost, true);
+			},
 		});
 	}
 
@@ -605,6 +642,54 @@ class DragController implements PluginValue {
 	private cancelRowAnimations(): void {
 		for (const animation of this.rowAnimations.values()) animation.cancel();
 		this.rowAnimations.clear();
+	}
+
+	private animateGhostLanding(measurement: MeasuredGhostTransition): void {
+		const { element, deltaX, deltaY, midDeltaX, midDeltaY, scaleX, scaleY } = measurement;
+		element.addClass("drag-and-drop-lists-ghost-settling");
+		this.exitingGhosts.add(element);
+		const midScaleX = 1 - (1 - scaleX) * 0.28;
+		const midScaleY = 1 - (1 - scaleY) * 0.18;
+		const animation = element.animate(
+			[
+				{
+					offset: 0,
+					translate: "0 0",
+					scale: "1 1",
+					opacity: 0.96,
+					clipPath: "inset(0% 0% round 0%)",
+				},
+				{
+					offset: 0.58,
+					translate: `${midDeltaX}px ${midDeltaY}px`,
+					scale: `${midScaleX} ${midScaleY}`,
+					opacity: 0.88,
+					clipPath: "inset(2% 1% round 6%)",
+				},
+				{
+					offset: 1,
+					translate: `${deltaX}px ${deltaY}px`,
+					scale: `${scaleX} ${scaleY}`,
+					opacity: 0,
+					clipPath: "inset(16% 5% round 18%)",
+				},
+			],
+			{
+				duration: GHOST_LANDING_DURATION_MS,
+				easing: "cubic-bezier(0.2, 0, 0, 1)",
+				fill: "forwards",
+			},
+		);
+		this.ghostLandingAnimations.set(element, animation);
+		const removeLandedGhost = (): void => {
+			element.remove();
+			this.exitingGhosts.delete(element);
+			if (this.ghostLandingAnimations.get(element) === animation) {
+				this.ghostLandingAnimations.delete(element);
+			}
+		};
+		animation.onfinish = removeLandedGhost;
+		animation.oncancel = removeLandedGhost;
 	}
 
 	private autoScroll(clientY: number): boolean {
@@ -649,6 +734,8 @@ class DragController implements PluginValue {
 	}
 
 	private clearExitingGhosts(): void {
+		for (const animation of this.ghostLandingAnimations.values()) animation.cancel();
+		this.ghostLandingAnimations.clear();
 		for (const timer of this.ghostExitTimers) this.viewWindow.clearTimeout(timer);
 		this.ghostExitTimers.clear();
 		for (const ghost of this.exitingGhosts) ghost.remove();

@@ -11,6 +11,7 @@ For synced vaults, deploy only `main.js`, `manifest.json`, and `styles.css` into
 - Dropping at another nesting level reindents the moved subtree.
 - The move is a single undoable editor transaction.
 - Surrounding rows glide into their new vertical positions after a drop.
+- The drag preview gently converges into the moved item's destination line.
 - Choose whether the cursor lands at the beginning or end of the moved line.
 - Cancel an active drag with Escape or by releasing outside a valid list target.
 - Reorder within blockquotes and with mixed tab/space indentation safely.

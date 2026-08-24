@@ -1,6 +1,6 @@
 {
   "name": "drag-and-drop-lists",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Reorder list items by dragging their checkboxes or list markers.",
   "main": "main.js",
   "type": "module",

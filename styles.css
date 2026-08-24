@@ -187,6 +187,11 @@
 	.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-exiting {
 		animation: drag-and-drop-lists-ghost-exit 90ms cubic-bezier(0.4, 0, 1, 1) forwards;
 	}
+
+	.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-settling {
+		animation: none;
+		will-change: translate, scale, opacity, clip-path;
+	}
 }
 
 @keyframes drag-and-drop-lists-ghost-enter {
