@@ -16,9 +16,11 @@ import {
 	indentationWidth,
 	lineIndent,
 	type ListBlock,
+	type MoveResult,
 	moveListBlock,
 	parseListLine,
 } from "./list-model";
+import { calculateRowDeltas } from "./row-transition";
 
 const PLUGIN_ID = "drag-and-drop-lists";
 const TASK_HANDLE_SELECTOR = ".task-list-label";
@@ -26,6 +28,7 @@ const QUOTE_HANDLE_SELECTOR = ".drag-and-drop-lists-quote-list .cm-formatting-qu
 const CONTINUATION_HANDLE_SELECTOR = ".HyperMD-list-line-nobullet .cm-hmd-list-indent";
 const HANDLE_SELECTOR = `${TASK_HANDLE_SELECTOR}, .cm-formatting-list, ${QUOTE_HANDLE_SELECTOR}, ${CONTINUATION_HANDLE_SELECTOR}`;
 const LIST_LINE_SELECTOR = ".HyperMD-list-line.cm-line, .HyperMD-quote.cm-line";
+const ROW_TRANSITION_DURATION_MS = 160;
 interface DropTarget {
 	block: ListBlock;
 	line: number;
@@ -64,6 +67,18 @@ interface VisualState {
 	source: ListBlock | null;
 	target: DropTarget | null;
 	decorations: DecorationSet;
+}
+
+interface PendingRowTransition {
+	oldTops: Map<number, number>;
+	originalLineIndexes: number[];
+	movingStart: number;
+	movingEnd: number;
+}
+
+interface MeasuredRowTransition {
+	element: HTMLElement;
+	deltaY: number;
 }
 
 const setSource = StateEffect.define<ListBlock | null>();
@@ -156,6 +171,7 @@ function applyEditorMove(
 	target: ListBlock,
 	side: "before" | "after",
 	cursorPlacement: CursorPlacement,
+	beforeTransaction?: (result: MoveResult) => void,
 ): void {
 	const originalLines = editor.getValue().split("\n");
 	const result = moveListBlock(originalLines, source, target, side);
@@ -171,6 +187,7 @@ function applyEditorMove(
 	const cursorCh = cursorPlacement === "end"
 		? (result.lines[result.insertionIndex]?.length ?? 0)
 		: 0;
+	beforeTransaction?.(result);
 	editor.transaction({
 		changes: [{
 			from: { line: firstChangedLine, ch: 0 },
@@ -189,8 +206,10 @@ class DragController implements PluginValue {
 	private pointerX = 0;
 	private pointerY = 0;
 	private autoScrollTimer: number | null = null;
+	private pendingRowTransition: PendingRowTransition | null = null;
 	private readonly exitingGhosts = new Set<HTMLElement>();
 	private readonly ghostExitTimers = new Set<number>();
+	private readonly rowAnimations = new Map<HTMLElement, Animation>();
 	private readonly eventDocument: Document;
 	private readonly viewWindow: Window;
 	private readonly onPointerDown = (event: PointerEvent): void => { this.pointerDown(event); };
@@ -238,9 +257,19 @@ class DragController implements PluginValue {
 		this.viewWindow.removeEventListener("blur", this.onBlur);
 		this.cleanup(false);
 		this.clearExitingGhosts();
+		this.pendingRowTransition = null;
+		this.cancelRowAnimations();
 	}
 
 	update(update: ViewUpdate): void {
+		const rowTransition = update.docChanged ? this.pendingRowTransition : null;
+		if (rowTransition) {
+			this.pendingRowTransition = null;
+			this.scheduleRowTransition(rowTransition);
+		} else if (update.docChanged || update.viewportChanged) {
+			this.pendingRowTransition = null;
+			this.cancelRowAnimations();
+		}
 		if (update.docChanged || update.viewportChanged) {
 			this.quoteHandleDecorations = makeQuoteHandleDecorations(update.view);
 		}
@@ -252,6 +281,7 @@ class DragController implements PluginValue {
 
 	private pointerDown(event: PointerEvent): void {
 		if (event.button !== 0 || !event.isPrimary || this.pending || this.context) return;
+		this.cancelRowAnimations();
 		if (this.suppressClickUntil === Number.POSITIVE_INFINITY) this.suppressClickUntil = 0;
 		const handle = closestElement(event.target, HANDLE_SELECTOR);
 		if (!handle || !this.view.contentDOM.contains(handle)) return;
@@ -489,7 +519,92 @@ class DragController implements PluginValue {
 		const info = this.view.state.field(editorInfoField, false);
 		const editor = info?.editor;
 		if (!editor) return;
-		applyEditorMove(editor, source, target.block, target.side, this.getSettings().cursorPlacement);
+		applyEditorMove(
+			editor,
+			source,
+			target.block,
+			target.side,
+			this.getSettings().cursorPlacement,
+			(result) => { this.prepareRowTransition(source, result); },
+		);
+	}
+
+	private visibleRows(view: EditorView): Map<number, HTMLElement> {
+		const rows = new Map<number, HTMLElement>();
+		for (const row of view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")) {
+			try {
+				const lineIndex = view.state.doc.lineAt(view.posAtDOM(row, 0)).number - 1;
+				if (!rows.has(lineIndex)) rows.set(lineIndex, row);
+			} catch {
+				// CodeMirror may recycle a row while the viewport is changing.
+			}
+		}
+		return rows;
+	}
+
+	private prepareRowTransition(source: ListBlock, result: MoveResult): void {
+		this.pendingRowTransition = null;
+		this.cancelRowAnimations();
+		if (this.viewWindow.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+		const scrollTop = this.view.scrollDOM.scrollTop;
+		const oldTops = new Map<number, number>();
+		for (const [lineIndex, row] of this.visibleRows(this.view)) {
+			oldTops.set(lineIndex, row.getBoundingClientRect().top + scrollTop);
+		}
+		this.pendingRowTransition = {
+			oldTops,
+			originalLineIndexes: result.originalLineIndexes,
+			movingStart: source.start - 1,
+			movingEnd: source.end - 1,
+		};
+	}
+
+	private scheduleRowTransition(transition: PendingRowTransition): void {
+		this.view.requestMeasure({
+			read: (view): MeasuredRowTransition[] => {
+				const rows = this.visibleRows(view);
+				const scrollTop = view.scrollDOM.scrollTop;
+				const newTops = new Map<number, number>();
+				for (const [lineIndex, row] of rows) {
+					newTops.set(lineIndex, row.getBoundingClientRect().top + scrollTop);
+				}
+				return calculateRowDeltas(
+					transition.oldTops,
+					newTops,
+					transition.originalLineIndexes,
+					transition.movingStart,
+					transition.movingEnd,
+				).flatMap(({ newLineIndex, deltaY }) => {
+					const element = rows.get(newLineIndex);
+					return element ? [{ element, deltaY }] : [];
+				});
+			},
+			write: (measurements): void => { this.animateRows(measurements); },
+		});
+	}
+
+	private animateRows(measurements: readonly MeasuredRowTransition[]): void {
+		if (this.viewWindow.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+		for (const { element, deltaY } of measurements) {
+			const animation = element.animate(
+				[{ translate: `0 ${deltaY}px` }, { translate: "0 0" }],
+				{
+					duration: ROW_TRANSITION_DURATION_MS,
+					easing: "cubic-bezier(0.2, 0, 0, 1)",
+				},
+			);
+			this.rowAnimations.set(element, animation);
+			const forgetAnimation = (): void => {
+				if (this.rowAnimations.get(element) === animation) this.rowAnimations.delete(element);
+			};
+			animation.onfinish = forgetAnimation;
+			animation.oncancel = forgetAnimation;
+		}
+	}
+
+	private cancelRowAnimations(): void {
+		for (const animation of this.rowAnimations.values()) animation.cancel();
+		this.rowAnimations.clear();
 	}
 
 	private autoScroll(clientY: number): boolean {

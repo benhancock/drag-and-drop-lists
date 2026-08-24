@@ -18,6 +18,7 @@ export interface ParsedListLine {
 export interface MoveResult {
 	lines: string[];
 	insertionIndex: number;
+	originalLineIndexes: number[];
 }
 
 export type DropSide = "before" | "after";
@@ -216,9 +217,12 @@ export function moveListBlock(
 	const sourceIndex = source.start - 1;
 	const sourceEnd = source.end;
 	const semanticMoved = originalLines.slice(sourceIndex, sourceEnd);
+	const semanticMovedIndexes = originalLines.slice(sourceIndex, sourceEnd)
+		.map((_, offset) => sourceIndex + offset);
 	let removalStart = sourceIndex;
 	let removalEnd = sourceEnd;
 	let separator: string[] = [];
+	let separatorIndexes: number[] = [];
 
 	const lastMovableBlankIndex = originalLines.at(-1) === "" ? originalLines.length - 1 : originalLines.length;
 	while (removalEnd < lastMovableBlankIndex && isSemanticBlank(originalLines[removalEnd] ?? "")) {
@@ -226,6 +230,8 @@ export function moveListBlock(
 	}
 	if (removalEnd > sourceEnd) {
 		separator = originalLines.slice(sourceEnd, removalEnd);
+		separatorIndexes = originalLines.slice(sourceEnd, removalEnd)
+			.map((_, offset) => sourceEnd + offset);
 	} else {
 		let precedingBlankStart = removalStart;
 		while (precedingBlankStart > 0 && isSemanticBlank(originalLines[precedingBlankStart - 1] ?? "")) {
@@ -240,12 +246,16 @@ export function moveListBlock(
 		if (separatorBelongsToList) {
 			removalStart = precedingBlankStart;
 			separator = originalLines.slice(removalStart, sourceIndex);
+			separatorIndexes = originalLines.slice(removalStart, sourceIndex)
+				.map((_, offset) => removalStart + offset);
 		}
 	}
 
 	const removalCount = removalEnd - removalStart;
 	const lines = [...originalLines];
+	const originalLineIndexes = originalLines.map((_, index) => index);
 	const removed = lines.splice(removalStart, removalCount);
+	originalLineIndexes.splice(removalStart, removalCount);
 	const originalBoundary = side === "before" ? target.start - 1 : target.end;
 	let insertionIndex = originalBoundary;
 	if (originalBoundary >= removalEnd) insertionIndex -= removalCount;
@@ -256,11 +266,15 @@ export function moveListBlock(
 	const inserted = side === "before"
 		? [...reindented, ...separator]
 		: [...separator, ...reindented];
+	const insertedIndexes = side === "before"
+		? [...semanticMovedIndexes, ...separatorIndexes]
+		: [...separatorIndexes, ...semanticMovedIndexes];
 	if (insertionIndex === removalStart
 		&& inserted.length === removed.length
 		&& inserted.every((line, index) => line === removed[index])) return null;
 
 	lines.splice(insertionIndex, 0, ...inserted);
+	originalLineIndexes.splice(insertionIndex, 0, ...insertedIndexes);
 	const semanticInsertionIndex = insertionIndex + (side === "after" ? separator.length : 0);
-	return { lines, insertionIndex: semanticInsertionIndex };
+	return { lines, insertionIndex: semanticInsertionIndex, originalLineIndexes };
 }

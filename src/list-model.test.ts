@@ -77,6 +77,7 @@ describe("moveListBlock", () => {
 		const lines = ["- parent", "  - child", "- target"];
 		const result = moveListBlock(lines, block(lines, 0), block(lines, 2), "after");
 		expect(result?.lines).toEqual(["- target", "- parent", "  - child"]);
+		expect(result?.originalLineIndexes).toEqual([2, 0, 1]);
 	});
 
 	it("moves regular and ordered items without changing their markers", () => {
@@ -107,12 +108,14 @@ describe("moveListBlock", () => {
 		const lines = ["- source", "", "- target", ""];
 		const result = moveListBlock(lines, block(lines, 0), block(lines, 2), "after");
 		expect(result?.lines).toEqual(["- target", "", "- source", ""]);
+		expect(result?.originalLineIndexes).toEqual([2, 1, 0, 3]);
 	});
 
 	it("carries a preceding separator when moving the last item of a loose list", () => {
 		const lines = ["- first", "", "- last"];
 		const result = moveListBlock(lines, block(lines, 2), block(lines, 0), "before");
 		expect(result?.lines).toEqual(["- last", "", "- first"]);
+		expect(result?.originalLineIndexes).toEqual([2, 1, 0]);
 	});
 
 	it("reorders within a blockquote", () => {
@@ -164,6 +167,8 @@ describe("moveListBlock", () => {
 					if (!result) continue;
 					expect(result.lines).toHaveLength(lines.length);
 					expect(result.lines.map((line) => line.trim()).sort()).toEqual(expectedLabels);
+					expect([...result.originalLineIndexes].sort((left, right) => left - right))
+						.toEqual(lines.map((_, index) => index));
 				}
 			}
 		}
