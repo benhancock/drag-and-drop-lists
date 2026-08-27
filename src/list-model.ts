@@ -24,8 +24,21 @@ export interface MoveResult {
 export type DropSide = "before" | "after";
 
 const LIST_LINE_PATTERN = /^((?:(?: {0,3}|\t)>[ \t]?)*)([ \t]*)([-+*]|\d{1,9}[.)])[ \t]+(?:\[([^\]\r\n]*)\][ \t]+)?(.*)$/;
+const EDITABLE_LIST_LINE_PATTERN = /^((?:(?: {0,3}|\t)>[ \t]?)*)([ \t]*)([-+*]|\d{1,9}[.)])([ \t]+)(?:\[([^\]\r\n]*)\]([ \t]+))?(.*)$/;
 const CONTAINER_PATTERN = /^((?:(?: {0,3}|\t)>[ \t]?)*)([ \t]*)(.*)$/;
 const QUOTE_SEGMENT_PATTERN = /^(?: {0,3}|\t)>[ \t]?/;
+const LIST_ITEM_STATUS_CYCLE: readonly (string | null)[] = [
+	null,
+	" ",
+	"x",
+	"/",
+	"-",
+	">",
+	"<",
+	"?",
+	"!",
+	"*",
+];
 
 function quoteDepth(prefix: string): number {
 	let depth = 0;
@@ -59,6 +72,34 @@ export function parseListLine(line: string): ParsedListLine | null {
 	};
 }
 
+export function changeListItemStatus(line: string, status: string | null): string | null {
+	if (status !== null && (status.length !== 1 || status === "]" || /[\r\n]/.test(status))) return null;
+	const match = EDITABLE_LIST_LINE_PATTERN.exec(line);
+	if (!match) return null;
+	const quotePrefix = match[1] ?? "";
+	const indent = match[2] ?? "";
+	const marker = match[3] ?? "-";
+	const markerSpacing = match[4] ?? " ";
+	const existingStatus = match[5] ?? null;
+	const statusSpacing = match[6] ?? " ";
+	const content = match[7] ?? "";
+	if (status === existingStatus) return line;
+	const prefix = quotePrefix + indent + marker + markerSpacing;
+	return status === null
+		? prefix + content
+		: `${prefix}[${status}]${statusSpacing}${content}`;
+}
+
+export function cycleListItemStatus(line: string): string | null {
+	const currentStatus = parseListLine(line)?.taskStatus;
+	if (currentStatus === undefined) return null;
+	const currentIndex = LIST_ITEM_STATUS_CYCLE.findIndex((status) => (
+		status === "x" ? currentStatus?.toLowerCase() === "x" : status === currentStatus
+	));
+	const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % LIST_ITEM_STATUS_CYCLE.length;
+	return changeListItemStatus(line, LIST_ITEM_STATUS_CYCLE[nextIndex] ?? null);
+}
+
 function parseContainerLine(line: string): {
 	quotePrefix: string;
 	quoteDepth: number;
@@ -85,33 +126,27 @@ export function findListBlock(lines: readonly string[], lineIndex: number): List
 	const item = parseListLine(source);
 	if (!item) return null;
 	const baseWidth = indentationWidth(item.indent);
+	const nestedItemWidth = baseWidth + item.marker.length + 1;
 	let end = lineIndex;
 
 	for (let index = lineIndex + 1; index < lines.length; index += 1) {
 		const candidate = lines[index] ?? "";
-		if (isSemanticBlank(candidate)) {
-			continue;
-		}
+		if (isSemanticBlank(candidate)) break;
 
 		const candidateItem = parseListLine(candidate);
 		if (candidateItem) {
 			if (candidateItem.quoteDepth < item.quoteDepth) break;
-			if (candidateItem.quoteDepth === item.quoteDepth
-				&& indentationWidth(candidateItem.indent) <= baseWidth) break;
+			if (candidateItem.quoteDepth === item.quoteDepth) {
+				if (indentationWidth(candidateItem.indent) < nestedItemWidth) break;
+			} else {
+				const outerPrefixEnd = consumeQuoteSegments(candidate, item.quoteDepth);
+				const nestedQuoteIndent = outerPrefixEnd === null ? "" : lineIndent(candidate.slice(outerPrefixEnd));
+				if (indentationWidth(nestedQuoteIndent) <= baseWidth) break;
+			}
 			end = index;
 			continue;
 		}
-
-		const container = parseContainerLine(candidate);
-		if (container.quoteDepth < item.quoteDepth) break;
-		const outerPrefixEnd = consumeQuoteSegments(candidate, item.quoteDepth);
-		const nestedContainerIndent = outerPrefixEnd === null ? "" : lineIndent(candidate.slice(outerPrefixEnd));
-		const isDeeperContainer = container.quoteDepth > item.quoteDepth
-			&& indentationWidth(nestedContainerIndent) > baseWidth;
-		if (container.quoteDepth > item.quoteDepth && !isDeeperContainer) break;
-		const isIndentedContinuation = indentationWidth(container.indent) > baseWidth;
-		if (!isDeeperContainer && !isIndentedContinuation) break;
-		end = index;
+		break;
 	}
 
 	return {
@@ -219,38 +254,8 @@ export function moveListBlock(
 	const semanticMoved = originalLines.slice(sourceIndex, sourceEnd);
 	const semanticMovedIndexes = originalLines.slice(sourceIndex, sourceEnd)
 		.map((_, offset) => sourceIndex + offset);
-	let removalStart = sourceIndex;
-	let removalEnd = sourceEnd;
-	let separator: string[] = [];
-	let separatorIndexes: number[] = [];
-
-	const lastMovableBlankIndex = originalLines.at(-1) === "" ? originalLines.length - 1 : originalLines.length;
-	while (removalEnd < lastMovableBlankIndex && isSemanticBlank(originalLines[removalEnd] ?? "")) {
-		removalEnd += 1;
-	}
-	if (removalEnd > sourceEnd) {
-		separator = originalLines.slice(sourceEnd, removalEnd);
-		separatorIndexes = originalLines.slice(sourceEnd, removalEnd)
-			.map((_, offset) => sourceEnd + offset);
-	} else {
-		let precedingBlankStart = removalStart;
-		while (precedingBlankStart > 0 && isSemanticBlank(originalLines[precedingBlankStart - 1] ?? "")) {
-			precedingBlankStart -= 1;
-		}
-		const previousContentIndex = precedingBlankStart - 1;
-		const previousBlock = previousContentIndex >= 0
-			? findContainingListBlock(originalLines, previousContentIndex)
-			: null;
-		const separatorBelongsToList = previousBlock?.quoteDepth === source.quoteDepth
-			&& indentationWidth(previousBlock.indent) === indentationWidth(source.indent);
-		if (separatorBelongsToList) {
-			removalStart = precedingBlankStart;
-			separator = originalLines.slice(removalStart, sourceIndex);
-			separatorIndexes = originalLines.slice(removalStart, sourceIndex)
-				.map((_, offset) => removalStart + offset);
-		}
-	}
-
+	const removalStart = sourceIndex;
+	const removalEnd = sourceEnd;
 	const removalCount = removalEnd - removalStart;
 	const lines = [...originalLines];
 	const originalLineIndexes = originalLines.map((_, index) => index);
@@ -263,18 +268,15 @@ export function moveListBlock(
 	if (insertionIndex < 0 || insertionIndex > lines.length) return null;
 
 	const reindented = semanticMoved.map((line) => reindentLine(line, source, target));
-	const inserted = side === "before"
-		? [...reindented, ...separator]
-		: [...separator, ...reindented];
-	const insertedIndexes = side === "before"
-		? [...semanticMovedIndexes, ...separatorIndexes]
-		: [...separatorIndexes, ...semanticMovedIndexes];
+	const inserted = reindented;
+	const insertedIndexes = semanticMovedIndexes;
 	if (insertionIndex === removalStart
 		&& inserted.length === removed.length
 		&& inserted.every((line, index) => line === removed[index])) return null;
 
 	lines.splice(insertionIndex, 0, ...inserted);
 	originalLineIndexes.splice(insertionIndex, 0, ...insertedIndexes);
-	const semanticInsertionIndex = insertionIndex + (side === "after" ? separator.length : 0);
+	const semanticInsertionIndex = originalLineIndexes.indexOf(sourceIndex);
+	if (semanticInsertionIndex < 0) return null;
 	return { lines, insertionIndex: semanticInsertionIndex, originalLineIndexes };
 }

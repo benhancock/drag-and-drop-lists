@@ -41,58 +41,73 @@
 }
 
 .cm-editor.drag-and-drop-lists-touch-pending,
-.cm-editor.drag-and-drop-lists-touch-pending * {
+.cm-editor.drag-and-drop-lists-touch-pending *,
+.cm-editor.drag-and-drop-lists-touch-owned,
+.cm-editor.drag-and-drop-lists-touch-owned * {
+	-webkit-touch-callout: none;
 	-webkit-user-select: none;
 	user-select: none;
 }
 
-.drag-and-drop-lists-source {
-	opacity: 0.32;
-	filter: saturate(0.6);
+.markdown-source-view .cm-line.drag-and-drop-lists-pending-source {
+	visibility: hidden;
 }
 
-.drag-and-drop-lists-target-before,
-.drag-and-drop-lists-target-after {
-	position: relative;
+.cm-editor.drag-and-drop-lists-active .cm-line.drag-and-drop-lists-projected-row {
+	translate: 0 var(--drag-and-drop-lists-projection-y, 0px);
+	transition: translate 140ms cubic-bezier(0.2, 0, 0, 1);
+	will-change: translate;
 }
 
-.drag-and-drop-lists-target-before::before,
-.drag-and-drop-lists-target-after::after {
-	content: "";
-	position: absolute;
+.cm-editor.drag-and-drop-lists-active .cm-line.drag-and-drop-lists-projected-source {
+	visibility: hidden;
+}
+
+.drag-and-drop-lists-placeholder {
+	box-sizing: border-box;
+	position: fixed;
+	top: 0;
 	left: 0;
-	right: 0;
-	height: 2px;
+	translate:
+		var(--drag-and-drop-lists-placeholder-x, -10000px)
+		var(--drag-and-drop-lists-placeholder-y, -10000px);
+	width: var(--drag-and-drop-lists-placeholder-width, 1px);
+	height: var(--drag-and-drop-lists-placeholder-height, var(--line-height-normal));
 	border-radius: var(--radius-s);
-	background: var(--interactive-accent);
-	box-shadow: 0 0 0 1px var(--background-primary), 0 0 8px var(--interactive-accent);
-	pointer-events: none;
-	z-index: var(--layer-popover);
+	background: var(--background-modifier-hover);
+	box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+	opacity: 0.72;
+	pointer-events: auto;
+	transition:
+		translate 140ms cubic-bezier(0.2, 0, 0, 1),
+		height 140ms cubic-bezier(0.2, 0, 0, 1);
+	z-index: 1;
 }
 
-.drag-and-drop-lists-target-before::before {
-	top: -1px;
-}
-
-.drag-and-drop-lists-target-after::after {
-	bottom: -1px;
+.drag-and-drop-lists-placeholder.drag-and-drop-lists-placeholder-initial {
+	transition: none;
 }
 
 .drag-and-drop-lists-ghost {
+	box-sizing: border-box;
 	position: fixed;
-	top: var(--drag-and-drop-lists-y, -10000px);
-	left: var(--drag-and-drop-lists-x, -10000px);
+	top: var(--drag-and-drop-lists-landing-correction-y, 0px);
+	left: var(--drag-and-drop-lists-landing-correction-x, 0px);
 	transform-origin: top left;
 	transform: translate(
-		var(--size-4-2),
-		calc(-1 * var(--drag-and-drop-lists-anchor-y, 0px) - var(--size-4-2))
+		calc(var(--drag-and-drop-lists-x, -10000px) + var(--size-4-2)),
+		calc(
+			var(--drag-and-drop-lists-y, -10000px)
+			- var(--drag-and-drop-lists-anchor-y, 0px)
+			- var(--size-4-2)
+		)
 	);
-	width: max-content;
+	width: var(--drag-and-drop-lists-preview-width, max-content);
 	min-width: 16rem;
 	max-width: min(32rem, calc(100vw - var(--size-4-8)));
 	max-height: 16rem;
 	overflow: hidden;
-	padding: var(--size-4-2);
+	padding: var(--size-4-1) var(--size-4-2);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
 	background: var(--background-primary);
@@ -101,57 +116,98 @@
 	opacity: 0.96;
 	pointer-events: none;
 	z-index: var(--layer-menu);
+	will-change: transform;
 }
 
-.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-left {
-	transform-origin: top right;
+.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-under-pointer {
+	transform-origin:
+		var(--drag-and-drop-lists-anchor-x, 0px)
+		var(--drag-and-drop-lists-anchor-y, 0px);
 	transform: translate(
-		calc(-100% - var(--size-4-2)),
-		calc(-1 * var(--drag-and-drop-lists-anchor-y, 0px) - var(--size-4-2))
+		calc(
+			var(--drag-and-drop-lists-x, -10000px)
+			- var(--drag-and-drop-lists-anchor-x, 0px)
+		),
+		calc(
+			var(--drag-and-drop-lists-y, -10000px)
+			- var(--drag-and-drop-lists-anchor-y, 0px)
+		)
 	);
 }
 
-.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-touch {
-	transform-origin: bottom left;
-	transform: translate(
-		var(--size-4-2),
-		calc(-100% - var(--size-4-6))
-	);
+.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-source-width {
+	min-width: 0;
+	max-width: none;
 }
 
-.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-touch.drag-and-drop-lists-ghost-left {
-	transform-origin: bottom right;
-	transform: translate(
-		calc(-100% - var(--size-4-2)),
-		calc(-100% - var(--size-4-6))
-	);
-}
-
-.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-touch-below {
-	transform-origin: top left;
-	transform: translate(
-		var(--size-4-2),
-		var(--size-4-6)
-	);
-}
-
-.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-touch-below.drag-and-drop-lists-ghost-left {
-	transform-origin: top right;
-	transform: translate(
-		calc(-100% - var(--size-4-2)),
-		var(--size-4-6)
-	);
+.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-pending {
+	animation: drag-and-drop-lists-pending-lift 220ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 
 .drag-and-drop-lists-ghost .drag-and-drop-lists-ghost-row {
 	box-sizing: border-box;
-	width: 100%;
-	min-height: var(--line-height-normal);
+	width: calc(100% - var(--drag-and-drop-lists-row-width-adjustment, 0px));
+	min-height: var(--drag-and-drop-lists-row-min-height, var(--line-height-normal));
 	margin: 0;
-	padding-block: var(--size-2-1, 2px);
-	padding-inline: calc(var(--size-4-2) + var(--drag-and-drop-lists-indent, 0ch)) var(--size-4-2);
-	text-indent: 0;
-	white-space: normal;
+	translate: var(--drag-and-drop-lists-row-shift-x, 0px) 0;
+	padding-block: var(--drag-and-drop-lists-row-padding-top, var(--size-2-1, 2px))
+		var(--drag-and-drop-lists-row-padding-bottom, var(--size-2-1, 2px));
+	padding-inline: var(
+		--drag-and-drop-lists-row-padding-left,
+		calc(var(--size-4-2) + var(--drag-and-drop-lists-indent, 0ch))
+	) var(--drag-and-drop-lists-row-padding-right, var(--size-4-2));
+	color: var(--drag-and-drop-lists-row-color, var(--text-normal));
+	font-feature-settings: var(--drag-and-drop-lists-row-font-feature-settings, normal);
+	font-family: var(--drag-and-drop-lists-row-font-family, inherit);
+	font-kerning: var(--drag-and-drop-lists-row-font-kerning, auto);
+	font-size: var(--drag-and-drop-lists-row-font-size, inherit);
+	font-stretch: var(--drag-and-drop-lists-row-font-stretch, normal);
+	font-style: var(--drag-and-drop-lists-row-font-style, normal);
+	font-variant: var(--drag-and-drop-lists-row-font-variant, normal);
+	font-variation-settings: var(--drag-and-drop-lists-row-font-variation-settings, normal);
+	font-weight: var(--drag-and-drop-lists-row-font-weight, normal);
+	letter-spacing: var(--drag-and-drop-lists-row-letter-spacing, normal);
+	line-height: var(--drag-and-drop-lists-row-line-height, inherit);
+	tab-size: var(--drag-and-drop-lists-row-tab-size, 4);
+	text-indent: var(--drag-and-drop-lists-row-text-indent, 0);
+	text-decoration-color: var(--drag-and-drop-lists-row-text-decoration-color, currentColor);
+	text-decoration-line: var(--drag-and-drop-lists-row-text-decoration-line, none);
+	text-decoration-style: var(--drag-and-drop-lists-row-text-decoration-style, solid);
+	text-decoration-thickness: var(--drag-and-drop-lists-row-text-decoration-thickness, auto);
+	text-shadow: var(--drag-and-drop-lists-row-text-shadow, none);
+	text-transform: var(--drag-and-drop-lists-row-text-transform, none);
+	white-space: var(--drag-and-drop-lists-row-white-space, normal);
+	word-spacing: var(--drag-and-drop-lists-row-word-spacing, normal);
+}
+
+.drag-and-drop-lists-ghost .drag-and-drop-lists-ghost-styled-node {
+	border-radius: var(--drag-and-drop-lists-node-border-radius, 0);
+	background-color: var(--drag-and-drop-lists-node-background-color, transparent);
+	color: var(--drag-and-drop-lists-node-color, inherit);
+	font-feature-settings: var(--drag-and-drop-lists-node-font-feature-settings, normal);
+	font-family: var(--drag-and-drop-lists-node-font-family, inherit);
+	font-kerning: var(--drag-and-drop-lists-node-font-kerning, auto);
+	font-size: var(--drag-and-drop-lists-node-font-size, inherit);
+	font-stretch: var(--drag-and-drop-lists-node-font-stretch, normal);
+	font-style: var(--drag-and-drop-lists-node-font-style, normal);
+	font-variant: var(--drag-and-drop-lists-node-font-variant, normal);
+	font-variation-settings: var(--drag-and-drop-lists-node-font-variation-settings, normal);
+	font-weight: var(--drag-and-drop-lists-node-font-weight, inherit);
+	letter-spacing: var(--drag-and-drop-lists-node-letter-spacing, normal);
+	line-height: var(--drag-and-drop-lists-node-line-height, inherit);
+	opacity: var(--drag-and-drop-lists-node-opacity, 1);
+	text-decoration-color: var(--drag-and-drop-lists-node-text-decoration-color, currentColor);
+	text-decoration-line: var(--drag-and-drop-lists-node-text-decoration-line, none);
+	text-decoration-style: var(--drag-and-drop-lists-node-text-decoration-style, solid);
+	text-decoration-thickness: var(--drag-and-drop-lists-node-text-decoration-thickness, auto);
+	text-shadow: var(--drag-and-drop-lists-node-text-shadow, none);
+	text-transform: var(--drag-and-drop-lists-node-text-transform, none);
+	vertical-align: var(--drag-and-drop-lists-node-vertical-align, baseline);
+	word-spacing: var(--drag-and-drop-lists-node-word-spacing, normal);
+}
+
+.drag-and-drop-lists-ghost .drag-and-drop-lists-ghost-editor-context {
+	display: contents;
 }
 
 .drag-and-drop-lists-ghost .drag-and-drop-lists-ghost-row .cm-hmd-list-indent {
@@ -176,33 +232,30 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-	.drag-and-drop-lists-source {
-		transition: opacity 100ms ease;
-	}
-
-	.drag-and-drop-lists-ghost {
-		animation: drag-and-drop-lists-ghost-enter 140ms cubic-bezier(0.2, 0, 0, 1) both;
-	}
-
 	.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-exiting {
 		animation: drag-and-drop-lists-ghost-exit 90ms cubic-bezier(0.4, 0, 1, 1) forwards;
 	}
 
 	.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-settling {
 		animation: none;
-		will-change: translate, scale, opacity, clip-path;
+		transform-origin: top left;
+		will-change: translate, scale, opacity, background-color, border-color, box-shadow;
+	}
+
+	.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-entering {
+		transform-origin: top left;
+		will-change: translate, scale, opacity, background-color, border-color, box-shadow;
 	}
 }
 
-@keyframes drag-and-drop-lists-ghost-enter {
-	from {
-		opacity: 0;
-		scale: 0.96;
+@media (prefers-reduced-motion: reduce) {
+	.cm-editor.drag-and-drop-lists-active .cm-line.drag-and-drop-lists-projected-row,
+	.drag-and-drop-lists-placeholder {
+		transition: none;
 	}
 
-	to {
-		opacity: 0.96;
-		scale: 1;
+	.drag-and-drop-lists-ghost.drag-and-drop-lists-ghost-pending {
+		animation: none;
 	}
 }
 
@@ -215,6 +268,24 @@
 	to {
 		opacity: 0;
 		scale: 0.98;
+	}
+}
+
+@keyframes drag-and-drop-lists-pending-lift {
+	from {
+		border-color: transparent;
+		border-radius: var(--drag-and-drop-lists-pickup-radius, 0);
+		background-color: var(--drag-and-drop-lists-pickup-background, transparent);
+		box-shadow: none;
+		opacity: 1;
+	}
+
+	to {
+		border-color: var(--background-modifier-border);
+		border-radius: var(--radius-m);
+		background-color: var(--background-primary);
+		box-shadow: var(--shadow-l);
+		opacity: 0.96;
 	}
 }
 @media (pointer: coarse) {

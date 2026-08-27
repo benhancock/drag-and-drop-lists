@@ -1,18 +1,38 @@
 {
   "name": "drag-and-drop-lists",
-  "version": "0.7.0",
-  "description": "Reorder list items by dragging their checkboxes or list markers.",
+  "version": "1.0.0",
+  "description": "Reorder list items by dragging their markers, with animated previews and mobile task status controls.",
+  "private": true,
   "main": "main.js",
   "type": "module",
   "scripts": {
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "check": "npm test && npm run typecheck && npm run lint -- --max-warnings 0 && npm run build",
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
-  "keywords": ["obsidian", "obsidian-plugin", "drag-and-drop", "tasks"],
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "drag-and-drop",
+    "lists",
+    "tasks"
+  ],
   "author": "Ben Hancock",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benhancock/drag-and-drop-lists.git"
+  },
+  "bugs": {
+    "url": "https://github.com/benhancock/drag-and-drop-lists/issues"
+  },
+  "homepage": "https://github.com/benhancock/drag-and-drop-lists#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "devDependencies": {
     "@codemirror/state": "6.5.0",
     "@codemirror/view": "6.38.6",
@@ -22,7 +42,7 @@
     "eslint-plugin-obsidianmd": "^0.4.0",
     "globals": "^17.6.1",
     "jiti": "^2.6.1",
-    "obsidian": "latest",
+    "obsidian": "1.13.1",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.59.1",
     "vitest": "^3.2.4"

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+	changeListItemStatus,
+	cycleListItemStatus,
 	findContainingListBlock,
 	findListBlock,
 	findSiblingListBlock,
@@ -30,10 +32,67 @@ describe("parseListLine", () => {
 	);
 });
 
+describe("changeListItemStatus", () => {
+	it("converts an ordinary bullet into a task without changing its content", () => {
+		expect(changeListItemStatus("- Pick this up", " ")).toBe("- [ ] Pick this up");
+	});
+
+	it("changes only the status character and preserves original spacing", () => {
+		expect(changeListItemStatus("\t*  [ ]\tNested task", "?")).toBe("\t*  [?]\tNested task");
+	});
+
+	it("converts quoted and ordered tasks back to ordinary list items", () => {
+		expect(changeListItemStatus(">  12) [x] Finished", null)).toBe(">  12) Finished");
+	});
+
+	it("supports every one-character custom status, including a star", () => {
+		expect(changeListItemStatus("- [x] Task", "*")).toBe("- [*] Task");
+		expect(changeListItemStatus("- [x] Task", ">")).toBe("- [>] Task");
+	});
+
+	it("returns the original line for an already-selected status", () => {
+		expect(changeListItemStatus("- [?] Task", "?")).toBe("- [?] Task");
+		expect(changeListItemStatus("- Bullet", null)).toBe("- Bullet");
+	});
+
+	it("rejects prose and invalid multi-character statuses", () => {
+		expect(changeListItemStatus("Paragraph", "x")).toBeNull();
+		expect(changeListItemStatus("- Task", "done")).toBeNull();
+	});
+});
+
+describe("cycleListItemStatus", () => {
+	it("cycles through every supported list-item type and back to a bullet", () => {
+		const expected = [
+			"- [ ] Item",
+			"- [x] Item",
+			"- [/] Item",
+			"- [-] Item",
+			"- [>] Item",
+			"- [<] Item",
+			"- [?] Item",
+			"- [!] Item",
+			"- [*] Item",
+			"- Item",
+		];
+		let line = "- Item";
+		for (const next of expected) {
+			line = cycleListItemStatus(line) ?? "";
+			expect(line).toBe(next);
+		}
+	});
+
+	it("treats uppercase completion as done and resets unknown statuses to a bullet", () => {
+		expect(cycleListItemStatus("- [X] Finished")).toBe("- [/] Finished");
+		expect(cycleListItemStatus("- [~] Custom")).toBe("- Custom");
+		expect(cycleListItemStatus("Paragraph")).toBeNull();
+	});
+});
+
 describe("findListBlock", () => {
-	it("includes nested descendants but not the next sibling", () => {
+	it("includes nested bullets but not their prose or the next sibling", () => {
 		const lines = ["- parent", "  - child", "    continuation", "- sibling"];
-		expect(block(lines, 0)).toMatchObject({ start: 1, end: 3 });
+		expect(block(lines, 0)).toMatchObject({ start: 1, end: 2 });
 	});
 
 	it("stops before an unindented line", () => {
@@ -42,15 +101,20 @@ describe("findListBlock", () => {
 		expect(findContainingListBlock(lines, 1)).toBeNull();
 	});
 
-	it("treats an indented no-bullet line as part of its parent item", () => {
+	it("leaves an indented no-bullet line behind", () => {
 		const lines = ["- text", "  more text", "- sibling"];
-		expect(block(lines, 0)).toMatchObject({ start: 1, end: 2 });
-		expect(findContainingListBlock(lines, 1)).toMatchObject({ start: 1, end: 2 });
+		expect(block(lines, 0)).toMatchObject({ start: 1, end: 1 });
+		expect(findContainingListBlock(lines, 1)).toBeNull();
 	});
 
-	it("includes a loose indented continuation but leaves its trailing separator", () => {
+	it("does not reconnect a list item to content beyond a blank line", () => {
 		const lines = ["- item", "", "  continued", "", "paragraph"];
-		expect(block(lines, 0)).toMatchObject({ end: 3 });
+		expect(block(lines, 0)).toMatchObject({ end: 1 });
+	});
+
+	it("requires a child bullet to reach the parent content column", () => {
+		const lines = ["- item", " - unrelated pseudo-child", "  - child"];
+		expect(block(lines, 0)).toMatchObject({ end: 1 });
 	});
 
 	it.each(["# Heading", "```ts", "> quote", "<div>", "---"])(
@@ -63,7 +127,7 @@ describe("findListBlock", () => {
 
 	it("supports blockquote lists and nested quote content", () => {
 		const lines = ["> - item", ">   - child", ">   > nested quote", "> - sibling"];
-		expect(block(lines, 0)).toMatchObject({ end: 3, quoteDepth: 1 });
+		expect(block(lines, 0)).toMatchObject({ end: 2, quoteDepth: 1 });
 	});
 
 	it("does not consume trailing blank lines at end of file", () => {
@@ -92,6 +156,13 @@ describe("moveListBlock", () => {
 		expect(result?.lines).toEqual(["separate paragraph", "- target", "- source"]);
 	});
 
+	it("leaves indented prose behind while moving nested bullets", () => {
+		const lines = ["- source", "  - child", "  unrelated prose", "- target"];
+		const result = moveListBlock(lines, block(lines, 0), block(lines, 3), "after");
+		expect(result?.lines).toEqual(["  unrelated prose", "- target", "- source", "  - child"]);
+		expect(result?.insertionIndex).toBe(2);
+	});
+
 	it("reindents mixed tabs and spaces by visual width", () => {
 		const lines = ["\t- source", "\t  - child", "  - target"];
 		const result = moveListBlock(lines, block(lines, 0), block(lines, 2), "after");
@@ -104,24 +175,31 @@ describe("moveListBlock", () => {
 		expect(result?.lines).toEqual(["- parent", "  - first", "- moving", "- target"]);
 	});
 
-	it("preserves a final newline and trailing blank separators", () => {
+	it("leaves following blank lines at their original positions", () => {
 		const lines = ["- source", "", "- target", ""];
 		const result = moveListBlock(lines, block(lines, 0), block(lines, 2), "after");
-		expect(result?.lines).toEqual(["- target", "", "- source", ""]);
-		expect(result?.originalLineIndexes).toEqual([2, 1, 0, 3]);
+		expect(result?.lines).toEqual(["", "- target", "- source", ""]);
+		expect(result?.originalLineIndexes).toEqual([1, 2, 0, 3]);
 	});
 
-	it("carries a preceding separator when moving the last item of a loose list", () => {
+	it("leaves preceding blank lines behind when moving the last item", () => {
 		const lines = ["- first", "", "- last"];
 		const result = moveListBlock(lines, block(lines, 2), block(lines, 0), "before");
-		expect(result?.lines).toEqual(["- last", "", "- first"]);
-		expect(result?.originalLineIndexes).toEqual([2, 1, 0]);
+		expect(result?.lines).toEqual(["- last", "- first", ""]);
+		expect(result?.originalLineIndexes).toEqual([2, 0, 1]);
+	});
+
+	it("never carries multiple whitespace-only lines following a bullet", () => {
+		const lines = ["- source", "   ", "\t", "- target"];
+		const result = moveListBlock(lines, block(lines, 0), block(lines, 3), "after");
+		expect(result?.lines).toEqual(["   ", "\t", "- target", "- source"]);
+		expect(result?.originalLineIndexes).toEqual([1, 2, 3, 0]);
 	});
 
 	it("reorders within a blockquote", () => {
 		const lines = ["> - source", ">   continuation", "> - target"];
 		const result = moveListBlock(lines, block(lines, 0), block(lines, 2), "after");
-		expect(result?.lines).toEqual(["> - target", "> - source", ">   continuation"]);
+		expect(result?.lines).toEqual([">   continuation", "> - target", "> - source"]);
 	});
 
 	it("keeps a quoted parent, child, and surrounding separators together", () => {
@@ -166,6 +244,7 @@ describe("moveListBlock", () => {
 					const result = moveListBlock(lines, source, target, side);
 					if (!result) continue;
 					expect(result.lines).toHaveLength(lines.length);
+					expect(result.originalLineIndexes[result.insertionIndex]).toBe(source.start - 1);
 					expect(result.lines.map((line) => line.trim()).sort()).toEqual(expectedLabels);
 					expect([...result.originalLineIndexes].sort((left, right) => left - right))
 						.toEqual(lines.map((_, index) => index));
@@ -176,9 +255,9 @@ describe("moveListBlock", () => {
 });
 
 describe("keyboard block discovery", () => {
-	it("finds the nearest containing item from a continuation line", () => {
+	it("does not treat a prose continuation as a draggable list item", () => {
 		const lines = ["- parent", "  - child", "    continuation", "- sibling"];
-		expect(findContainingListBlock(lines, 2)).toMatchObject({ start: 2, end: 3 });
+		expect(findContainingListBlock(lines, 2)).toBeNull();
 	});
 
 	it("finds same-level siblings without crossing the parent boundary", () => {
