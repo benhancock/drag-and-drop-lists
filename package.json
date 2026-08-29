@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && node esbuild.config.mjs production",
     "check": "npm test && npm run typecheck && npm run lint -- --max-warnings 0 && npm run build",
     "dev": "node esbuild.config.mjs",
+    "generate:icons": "node scripts/generate-heroicons-micro.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -41,6 +42,7 @@
     "eslint": "^9.39.4",
     "eslint-plugin-obsidianmd": "^0.4.0",
     "globals": "^17.6.1",
+    "heroicons": "^2.2.0",
     "jiti": "^2.6.1",
     "obsidian": "1.13.1",
     "typescript": "^5.8.3",

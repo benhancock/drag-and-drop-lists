@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	autoScrollConfig,
+	dragPickupDelay,
 	dragStartThreshold,
 	hasReachedDragStartThreshold,
 	isTouchPointer,
@@ -19,6 +20,11 @@ describe("mobile pointer behavior", () => {
 	it("requires more movement before starting a touch drag", () => {
 		expect(dragStartThreshold(true)).toBe(10);
 		expect(dragStartThreshold(false)).toBe(5);
+	});
+
+	it("gives mobile taps a short head start before pickup", () => {
+		expect(dragPickupDelay(true)).toBe(120);
+		expect(dragPickupDelay(false)).toBe(0);
 	});
 
 	it("keeps small touch movement as a tap but claims movement at the drag threshold", () => {
@@ -57,6 +63,16 @@ describe("mobile pointer behavior", () => {
 		];
 		expect(nearestTouchTarget(targets, 31, 34, 22)).toBe("nested");
 		expect(nearestTouchTarget(targets, 60, 34, 22)).toBeNull();
+	});
+
+	it("ignores covered/clipped markers without shrinking the visible marker's touch target", () => {
+		const targets = [
+			{ value: "covered", centerX: 20, centerY: 20 },
+			{ value: "visible", centerX: 20, centerY: 40 },
+		];
+		const exposed = (target: { value: string }): boolean => target.value === "visible";
+		expect(nearestTouchTarget(targets, 20, 25, 22, exposed)).toBe("visible");
+		expect(nearestTouchTarget(targets, 20, 15, 22, exposed)).toBeNull();
 	});
 
 	it("keeps an active touch drag on the vertically hovered row regardless of horizontal drift", () => {

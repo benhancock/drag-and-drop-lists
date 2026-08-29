@@ -9,7 +9,7 @@ export default defineConfig(
 			globals: { ...globals.browser },
 			parserOptions: {
 				projectService: {
-					allowDefaultProject: ["eslint.config.mts", "manifest.json"],
+					allowDefaultProject: ["eslint.config.mts", "manifest.json", "scripts/*.mjs"],
 				},
 				tsconfigRootDir: import.meta.dirname,
 				extraFileExtensions: [".json"],
@@ -20,6 +20,12 @@ export default defineConfig(
 	{
 		rules: {
 			"obsidianmd/settings-tab/prefer-setting-definitions": "off",
+		},
+	},
+	{
+		files: ["scripts/*.mjs"],
+		rules: {
+			"obsidianmd/no-nodejs-modules": "off",
 		},
 	},
 );

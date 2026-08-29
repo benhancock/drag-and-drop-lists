@@ -30,6 +30,10 @@ export function dragStartThreshold(touchPointer: boolean): number {
 	return touchPointer ? 10 : 5;
 }
 
+export function dragPickupDelay(touchPointer: boolean): number {
+	return touchPointer ? 120 : 0;
+}
+
 export function hasReachedDragStartThreshold(
 	startX: number,
 	startY: number,
@@ -57,6 +61,7 @@ export function nearestTouchTarget<T>(
 	clientX: number,
 	clientY: number,
 	hitRadius: number,
+	isEligible?: (target: TouchTargetGeometry<T>) => boolean,
 ): T | null {
 	let nearest: T | null = null;
 	let nearestDistanceSquared = Number.POSITIVE_INFINITY;
@@ -66,6 +71,7 @@ export function nearestTouchTarget<T>(
 		if (Math.abs(deltaX) > hitRadius || Math.abs(deltaY) > hitRadius) continue;
 		const distanceSquared = deltaX * deltaX + deltaY * deltaY;
 		if (distanceSquared >= nearestDistanceSquared) continue;
+		if (isEligible && !isEligible(target)) continue;
 		nearest = target.value;
 		nearestDistanceSquared = distanceSquared;
 	}
