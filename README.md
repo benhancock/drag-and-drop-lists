@@ -4,6 +4,8 @@ Reorder Markdown list items directly in Obsidian's Live Preview editor by draggi
 
 Drag and Drop Lists works on desktop and mobile. The dragged item follows the pointer while the surrounding list rearranges to show exactly where it will land.
 
+![Dragging a task and its nested items in Obsidian](assets/drag-and-drop-lists-demo.webp)
+
 ## Features
 
 - Drag unordered, numbered, and task-list items by their visible marker.
