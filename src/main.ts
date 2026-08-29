@@ -10,35 +10,11 @@ import {
 	App,
 	type Editor,
 	editorInfoField,
-	Events,
-	type ExtraButtonComponent,
-	Notice,
 	Plugin,
 	PluginSettingTab,
-	Setting,
-	setIcon,
-	type SettingDefinition,
 	type SettingDefinitionItem,
-	SuggestModal,
 } from "obsidian";
-import {
-	HEROICON_MICRO_NAMES,
-	isHeroIconName,
-	type HeroIconName,
-} from "./heroicons-micro";
-import { BatchedIconUpdates } from "./icon-updates";
 import { editorOwnsGestureStart, markerIsExposed } from "./gesture-surface";
-import {
-	applyTaskIcons,
-	clearTaskIcons,
-	measureTaskIcons,
-	heroIconVariantForAppearance,
-	renderHeroIcon,
-	setTaskIconAppearance,
-	syncTaskIcons,
-	taskIconMutationRoots,
-	type TaskIconMeasurement,
-} from "./task-icons";
 import {
 	autoScrollConfig,
 	dragPickupDelay,
@@ -74,19 +50,6 @@ import {
 	calculateRowDeltas,
 	type GhostLanding,
 } from "./row-transition";
-import { preserveSelectValueForClone } from "./settings-card";
-import {
-	cloneDefaultTaskTypes,
-	createTaskType,
-	findAvailableTaskMarker,
-	isValidTaskAppearance,
-	isValidTaskColor,
-	isValidTaskMarker,
-	sanitizeTaskTypes,
-	taskMarkersForCycle,
-	type TaskTypeAppearance,
-	type TaskTypeDefinition,
-} from "./task-types";
 
 const PLUGIN_ID = "drag-and-drop-lists";
 const TASK_HANDLE_SELECTOR = ".task-list-label";
@@ -121,20 +84,11 @@ type CursorPlacement = "beginning" | "end";
 
 interface DragAndDropListsSettings {
 	cursorPlacement: CursorPlacement;
-	taskTypes: TaskTypeDefinition[];
 }
 
 const DEFAULT_SETTINGS: DragAndDropListsSettings = {
 	cursorPlacement: "beginning",
-	taskTypes: cloneDefaultTaskTypes(),
 };
-
-type TaskTypeChangeSubscription = (callback: () => void) => () => void;
-
-function formatHeroIconName(iconName: HeroIconName): string {
-	const words = iconName.replaceAll("-", " ");
-	return words.charAt(0).toUpperCase() + words.slice(1);
-}
 
 interface DragContext {
 	source: ListBlock;
@@ -338,9 +292,6 @@ class DragController implements PluginValue {
 	private autoScrollTimer: number | null = null;
 	private touchPickupTimer: number | null = null;
 	private cursorRestoreFrame: number | null = null;
-	private readonly taskIconObserver: MutationObserver;
-	private readonly taskIconUpdates: BatchedIconUpdates<HTMLElement, TaskIconMeasurement[]>;
-	private readonly unsubscribeTaskTypeChanges: () => void;
 	private pendingRowTransition: PendingRowTransition | null = null;
 	private desktopLanding: PendingDesktopLanding | null = null;
 	private readonly exitingGhosts = new Set<HTMLElement>();
@@ -384,33 +335,11 @@ class DragController implements PluginValue {
 	constructor(
 		private readonly view: EditorView,
 		private readonly getSettings: () => DragAndDropListsSettings,
-		subscribeTaskTypeChanges: TaskTypeChangeSubscription,
 	) {
 		const viewWindow = view.dom.ownerDocument.defaultView;
 		if (!viewWindow) throw new Error("The editor window is unavailable.");
 		this.viewWindow = viewWindow;
 		this.eventDocument = view.dom.ownerDocument;
-		this.taskIconUpdates = new BatchedIconUpdates({
-			root: view.contentDOM,
-			requestMeasure: (request) => view.requestMeasure(request),
-			read: (roots) => measureTaskIcons(
-				roots.filter((root) => view.contentDOM.contains(root)), this.getSettings().taskTypes,
-			),
-			write: (measurements) => {
-				// Keep external changes queued since the read phase, but do not
-				// let our own inserted SVGs trigger another scan of the editor.
-				this.taskIconMutations(this.taskIconObserver.takeRecords());
-				this.taskIconObserver.disconnect();
-				try {
-					applyTaskIcons(view.contentDOM, measurements);
-				} finally {
-					this.observeTaskIcons();
-				}
-			},
-		});
-		this.unsubscribeTaskTypeChanges = subscribeTaskTypeChanges(() => this.taskIconUpdates.invalidate());
-		this.taskIconObserver = new viewWindow.MutationObserver((records) => this.taskIconMutations(records));
-		this.observeTaskIcons();
 		this.quoteHandleDecorations = makeQuoteHandleDecorations(view);
 		this.eventDocument.addEventListener("pointerdown", this.onPointerDown, true);
 		this.eventDocument.addEventListener("pointermove", this.onPointerMove, true);
@@ -427,7 +356,6 @@ class DragController implements PluginValue {
 		this.eventDocument.addEventListener("click", this.onClick, true);
 		this.eventDocument.addEventListener("keydown", this.onKeyDown, true);
 		viewWindow.addEventListener("blur", this.onBlur);
-		this.taskIconUpdates.invalidate();
 	}
 
 	destroy(): void {
@@ -446,10 +374,6 @@ class DragController implements PluginValue {
 		this.eventDocument.removeEventListener("click", this.onClick, true);
 		this.eventDocument.removeEventListener("keydown", this.onKeyDown, true);
 		this.viewWindow.removeEventListener("blur", this.onBlur);
-		this.unsubscribeTaskTypeChanges();
-		this.taskIconUpdates.destroy();
-		this.taskIconObserver.disconnect();
-		clearTaskIcons(this.view.contentDOM);
 		if (this.cursorRestoreFrame !== null) this.viewWindow.cancelAnimationFrame(this.cursorRestoreFrame);
 		this.cancelDesktopLanding();
 		this.cleanup(false);
@@ -460,11 +384,6 @@ class DragController implements PluginValue {
 	}
 
 	update(update: ViewUpdate): void {
-		// Local content edits are handled by the observer at row granularity.
-		// Only a viewport/size change needs a full refresh; selection/focus does not.
-		if (update.viewportChanged || update.heightChanged || (!update.docChanged && update.geometryChanged)) {
-			this.taskIconUpdates.invalidate();
-		}
 		if (this.desktopLanding && update.docChanged && !this.desktopLanding.committing) {
 			this.cancelDesktopLanding();
 		}
@@ -487,22 +406,6 @@ class DragController implements PluginValue {
 		if (update.docChanged && (this.pending || this.context) && !this.desktopLanding?.committing) {
 			if (this.context) this.suppressClickUntil = Number.POSITIVE_INFINITY;
 			this.cleanup(false);
-		}
-	}
-
-	private observeTaskIcons(): void {
-		this.taskIconObserver.observe(this.view.contentDOM, {
-			attributes: true,
-			attributeFilter: ["data-task"],
-			characterData: true,
-			childList: true,
-			subtree: true,
-		});
-	}
-
-	private taskIconMutations(records: readonly MutationRecord[]): void {
-		for (const root of taskIconMutationRoots(records, this.view.contentDOM)) {
-			this.taskIconUpdates.invalidate(root);
 		}
 	}
 
@@ -1095,7 +998,6 @@ class DragController implements PluginValue {
 				this.renderFallbackRow(fallback, line.text);
 			}
 		}
-		syncTaskIcons(ghost, this.getSettings().taskTypes);
 		this.alignGhostRows(ghost, rowGeometries);
 		const firstRow = ghost.querySelector<HTMLElement>(".drag-and-drop-lists-ghost-row");
 		const firstAnchor = findLandingAnchor(firstRow) ?? firstRow;
@@ -2077,65 +1979,12 @@ class DragController implements PluginValue {
 	}
 }
 
-class HeroIconSuggestModal extends SuggestModal<HeroIconName> {
-	constructor(
-		app: App,
-		private readonly currentIcon: HeroIconName,
-		private readonly color: string | null,
-		private readonly appearance: TaskTypeAppearance,
-		private readonly chooseIcon: (iconName: HeroIconName) => void,
-	) {
-		super(app);
-		this.limit = HEROICON_MICRO_NAMES.length;
-		this.emptyStateText = "No matching Heroicons.";
-		this.setPlaceholder("Search icons");
-		this.modalEl.addClass("drag-and-drop-lists-icon-picker-modal");
-	}
-
-	getSuggestions(query: string): HeroIconName[] {
-		const normalizedQuery = query.trim().toLowerCase();
-		const icons = normalizedQuery.length === 0
-			? HEROICON_MICRO_NAMES
-			: HEROICON_MICRO_NAMES.filter((iconName) => iconName.includes(normalizedQuery));
-		return [...icons].sort((left, right) => {
-			if (left === this.currentIcon) return -1;
-			if (right === this.currentIcon) return 1;
-			return left.localeCompare(right);
-		});
-	}
-
-	renderSuggestion(iconName: HeroIconName, element: HTMLElement): void {
-		element.addClass("drag-and-drop-lists-heroicon-suggestion");
-		const preview = element.createSpan({
-			cls: "drag-and-drop-lists-heroicon-suggestion-preview",
-			attr: { "aria-hidden": "true" },
-		});
-		renderHeroIcon(preview, iconName, heroIconVariantForAppearance(this.appearance));
-		setTaskIconAppearance(preview, this.color, this.appearance);
-		element.createSpan({ text: formatHeroIconName(iconName) });
-		if (iconName === this.currentIcon) {
-			element.createSpan({
-				cls: "drag-and-drop-lists-heroicon-current",
-				text: "Current",
-			});
-		}
-	}
-
-	onChooseSuggestion(iconName: HeroIconName): void {
-		this.chooseIcon(iconName);
-	}
-}
-
 class DragAndDropListsSettingTab extends PluginSettingTab {
 	constructor(app: App, private readonly plugin: DragAndDropListsPlugin) {
 		super(app, plugin);
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem[] {
-		const taskItems: SettingDefinition[] = this.plugin.settings.taskTypes.map((taskType) => ({
-			name: taskType.name,
-			render: (setting: Setting) => this.renderTaskTypeSetting(setting, taskType),
-		}));
 		return [
 			{
 				name: "Cursor placement",
@@ -2153,291 +2002,26 @@ class DragAndDropListsSettingTab extends PluginSettingTab {
 					});
 				},
 			},
-			{
-				type: "list",
-				heading: "Custom task types",
-				cls: "drag-and-drop-lists-settings",
-				items: taskItems,
-				emptyState: "No task types configured.",
-				extraButtons: [(button) => {
-					button
-						.setIcon("rotate-ccw")
-						.setTooltip("Restore default task types")
-						.onClick(() => {
-							void this.plugin.restoreDefaultTaskTypes().then(() => this.update());
-						});
-				}],
-				onDelete: (index) => {
-					const taskType = this.plugin.settings.taskTypes[index];
-					if (!taskType) return;
-					void this.plugin.removeTaskType(taskType.id).then(() => this.update());
-				},
-				onReorder: (oldIndex, newIndex) => {
-					void this.plugin.reorderTaskType(oldIndex, newIndex).then(() => this.update());
-				},
-			},
-			{
-				name: "Add task type",
-				desc: "Create another custom Markdown checkbox state.",
-				render: (setting) => {
-					setting.settingEl.addClass("drag-and-drop-lists-add-task-type-setting");
-					setting.addButton((button) => {
-						button
-							.setIcon("plus")
-							.setTooltip("Add task type")
-							.onClick(async () => {
-								const added = await this.plugin.addTaskType();
-								if (added) this.update();
-							});
-						button.buttonEl.createSpan({ text: "Add task type" });
-						button.buttonEl.setAttribute("aria-label", "Add task type");
-						button.buttonEl.addClass("drag-and-drop-lists-add-task-type-button");
-						// Keep this affordance outside the indexed/reorderable items,
-						// but inside their container on desktop as well as mobile.
-						// The native list addItem control sits in the desktop header.
-						const ownGroup = setting.settingEl.closest(".setting-group");
-						const taskGroup = ownGroup?.previousElementSibling;
-						const list = taskGroup?.hasClass("drag-and-drop-lists-settings")
-							? taskGroup.querySelector(".setting-items") : null;
-						if (list && ownGroup) {
-							list.append(button.buttonEl);
-							// Rendering can finish by reattaching this framework-owned
-							// group, so hide its now-unused shell instead of removing it.
-							ownGroup.addClass("drag-and-drop-lists-relocated-add-group");
-						}
-					});
-				},
-			},
 		];
-	}
-
-	private renderTaskTypeSetting(setting: Setting, taskType: TaskTypeDefinition): void {
-		const markdown = `- [${taskType.marker}] Item`;
-		setting.settingEl.addClass("drag-and-drop-lists-task-type-setting");
-		for (const staleControl of setting.settingEl.querySelectorAll<HTMLElement>(
-			".drag-and-drop-lists-task-type-icon-picker, "
-			+ ".drag-and-drop-lists-task-type-reorder, "
-			+ ".drag-and-drop-lists-task-type-delete",
-		)) staleControl.remove();
-		let selectedIcon = taskType.icon;
-		let selectedAppearance = taskType.appearance;
-		let selectedColor = taskType.color;
-		let currentName = taskType.name;
-		let iconButton: HTMLButtonElement | null = null;
-		let setIconButtonName = (_name: string): void => undefined;
-		const createField = (label: string, className: string): HTMLElement => {
-			const field = setting.controlEl.createDiv({
-				cls: `drag-and-drop-lists-task-type-field ${className}`,
-			});
-			field.createDiv({
-				cls: "drag-and-drop-lists-task-type-field-label",
-				text: label,
-			});
-			return field;
-		};
-		const iconField = createField("Icon", "drag-and-drop-lists-task-type-icon-field");
-		setting.addButton((button) => {
-			iconButton = button.buttonEl;
-			setIconButtonName = (name): void => {
-				button.setTooltip(`Change icon for ${name}`);
-				button.buttonEl.setAttribute("aria-label", `Change icon for ${name}`);
-			};
-			button
-				.onClick(() => {
-					new HeroIconSuggestModal(
-						this.app,
-						selectedIcon,
-						selectedColor,
-						selectedAppearance,
-						(iconName) => {
-							selectedIcon = iconName;
-							this.renderTaskTypePreview(button.buttonEl, iconName, selectedColor, selectedAppearance);
-							void this.plugin.updateTaskType(taskType.id, { icon: iconName });
-						},
-					).open();
-				});
-			setIconButtonName(currentName);
-			button.buttonEl.addClass(
-				"drag-and-drop-lists-task-type-preview",
-				"drag-and-drop-lists-task-type-icon-picker",
-			);
-			this.renderTaskTypePreview(button.buttonEl, selectedIcon, selectedColor, selectedAppearance);
-			iconField.append(button.buttonEl);
-		});
-		if (!iconButton) return;
-		const preview = iconButton;
-
-		const nameField = createField("Name", "drag-and-drop-lists-task-type-name-field");
-
-		setting.addText((text) => {
-			text
-				.setPlaceholder("Name")
-				.setValue(taskType.name)
-				.onChange(async (value) => {
-					const name = value.trim();
-					text.inputEl.toggleClass("drag-and-drop-lists-input-invalid", name.length === 0);
-					if (name.length === 0) return;
-					currentName = name;
-					setIconButtonName(name);
-					await this.plugin.updateTaskType(taskType.id, { name });
-				});
-			text.inputEl.setAttribute("aria-label", `Name for ${markdown}`);
-			text.inputEl.addClass("drag-and-drop-lists-task-type-name");
-			nameField.append(text.inputEl);
-		});
-
-		const markerField = createField("Marker", "drag-and-drop-lists-task-type-marker-field");
-		setting.addText((text) => {
-			text
-				.setPlaceholder("Marker")
-				.setValue(taskType.marker === " " ? "space" : taskType.marker)
-				.onChange(async (value) => {
-					const marker = value === "space" ? " " : value;
-					const changed = await this.plugin.updateTaskType(taskType.id, { marker });
-					text.inputEl.toggleClass("drag-and-drop-lists-input-invalid", !changed);
-				});
-			text.inputEl.setAttribute("aria-label", `Bracket character for ${taskType.name}`);
-			text.inputEl.addClass("drag-and-drop-lists-task-type-marker");
-			markerField.append(text.inputEl);
-		});
-
-		const appearanceField = createField("Appearance", "drag-and-drop-lists-task-type-appearance-field");
-		setting.addDropdown((dropdown) => {
-			dropdown
-				.addOption("filled", "Filled")
-				.addOption("icon-only", "Icon only")
-				.addOption("outlined", "Outlined")
-				.setValue(selectedAppearance)
-				.onChange(async (value) => {
-					if (!isValidTaskAppearance(value)) return;
-					preserveSelectValueForClone(dropdown.selectEl);
-					selectedAppearance = value;
-					this.renderTaskTypePreview(preview, selectedIcon, selectedColor, value);
-					const input = setting.controlEl.querySelector<HTMLInputElement>("input[type='color']");
-					input?.setAttribute("aria-label", this.taskColorLabel(taskType.name, value));
-					await this.plugin.updateTaskType(taskType.id, { appearance: value });
-				});
-			preserveSelectValueForClone(dropdown.selectEl);
-			dropdown.selectEl.setAttribute("aria-label", `Icon appearance for ${taskType.name}`);
-			dropdown.selectEl.addClass("drag-and-drop-lists-task-type-appearance");
-			appearanceField.append(dropdown.selectEl);
-			const measuringSelect = dropdown.selectEl.nextElementSibling;
-			if (measuringSelect?.matches("select.is-measuring")) appearanceField.append(measuringSelect);
-		});
-
-		const defaultPickerColor = taskType.color ?? "#3b82f6";
-		let resetColorButton: ExtraButtonComponent | null = null;
-		const colorField = createField("Color", "drag-and-drop-lists-task-type-color-field");
-		setting.addColorPicker((picker) => {
-			picker
-				.setValue(defaultPickerColor)
-				.onChange(async (color) => {
-					selectedColor = color;
-					this.renderTaskTypePreview(preview, selectedIcon, color, selectedAppearance);
-					resetColorButton?.setDisabled(false);
-					const input = setting.controlEl.querySelector<HTMLInputElement>("input[type='color']");
-					input?.removeClass("drag-and-drop-lists-theme-color");
-					await this.plugin.updateTaskType(taskType.id, { color });
-				});
-			const input = setting.controlEl.querySelector<HTMLInputElement>("input[type='color']");
-			input?.setAttribute("aria-label", this.taskColorLabel(taskType.name, selectedAppearance));
-			input?.toggleClass("drag-and-drop-lists-theme-color", selectedColor === null);
-			if (input) colorField.append(input);
-		});
-
-		setting.addExtraButton((button) => {
-			resetColorButton = button;
-			button
-				.setIcon("rotate-ccw")
-				.setTooltip("Use theme accent color")
-				.setDisabled(selectedColor === null)
-				.onClick(() => {
-					selectedColor = null;
-					this.renderTaskTypePreview(preview, selectedIcon, null, selectedAppearance);
-					button.setDisabled(true);
-					const input = setting.controlEl.querySelector<HTMLInputElement>("input[type='color']");
-					input?.addClass("drag-and-drop-lists-theme-color");
-					void this.plugin.updateTaskType(taskType.id, { color: null });
-			});
-			button.extraSettingsEl.addClass("drag-and-drop-lists-reset-task-color");
-			colorField.append(button.extraSettingsEl);
-		});
-
-		setting.settingEl.ownerDocument.defaultView?.queueMicrotask(() => {
-			if (!setting.settingEl.isConnected) return;
-			const reorderHandle = setting.controlEl.querySelector<HTMLElement>(".mod-drag-handle");
-			if (reorderHandle) {
-				setIcon(reorderHandle, "grip-vertical");
-				reorderHandle.addClass("drag-and-drop-lists-task-type-reorder");
-				setting.settingEl.prepend(reorderHandle);
-				const preserveCardSize = (): void => {
-					const style = setting.settingEl.ownerDocument.defaultView?.getComputedStyle(setting.settingEl);
-					if (!style) return;
-					// These variables only size the detached copy. Keep the real card
-					// responsive, but prevent native integer rounding from reflowing it.
-					setting.settingEl.style.setProperty("--drag-and-drop-lists-card-width", style.width);
-					setting.settingEl.style.setProperty("--drag-and-drop-lists-card-height", style.height);
-				};
-				// Short-lived, owned handle: listeners leave with the settings row.
-				// Capture before the list's native drag handler clones the card.
-				reorderHandle.addEventListener("mousedown", preserveCardSize, { capture: true, passive: true });
-				reorderHandle.addEventListener("touchstart", preserveCardSize, { capture: true, passive: true });
-			}
-			const deleteButton = setting.controlEl.querySelector<HTMLElement>("[aria-label='Delete']");
-			if (deleteButton) {
-				deleteButton.addClass("drag-and-drop-lists-task-type-delete");
-				setting.controlEl.append(deleteButton);
-			}
-		});
-	}
-
-	private renderTaskTypePreview(
-		container: HTMLElement,
-		icon: HeroIconName,
-		color: string | null,
-		appearance: TaskTypeAppearance,
-	): void {
-		container.empty();
-		const glyph = container.createSpan({
-			cls: "drag-and-drop-lists-task-type-glyph",
-			attr: { "aria-hidden": "true" },
-		});
-		renderHeroIcon(glyph, icon, heroIconVariantForAppearance(appearance));
-		setTaskIconAppearance(glyph, color, appearance);
-	}
-
-	private taskColorLabel(name: string, appearance: TaskTypeAppearance): string {
-		const subject = appearance === "filled" ? "Background" : "Icon";
-		return `${subject} color for ${name}`;
 	}
 }
 
 export default class DragAndDropListsPlugin extends Plugin {
 	settings: DragAndDropListsSettings = DEFAULT_SETTINGS;
-	private readonly taskTypeEvents = new Events();
 
 	async onload(): Promise<void> {
-		const stored = await this.loadData() as {
-			cursorPlacement?: unknown;
-			taskTypes?: unknown;
-		} | null;
+		const stored = await this.loadData() as { cursorPlacement?: unknown } | null;
 		const cursorPlacement = stored?.cursorPlacement === "end" ? "end" : "beginning";
-		const taskTypes = sanitizeTaskTypes(stored?.taskTypes);
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, { cursorPlacement, taskTypes });
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, { cursorPlacement });
 		this.addSettingTab(new DragAndDropListsSettingTab(this.app, this));
 		const dragExtension = ViewPlugin.define(
 			(view) => new DragController(
 				view,
 				() => this.settings,
-				(callback) => {
-					const ref = this.taskTypeEvents.on("changed", callback);
-					return () => this.taskTypeEvents.offref(ref);
-				},
 			),
 			{ decorations: (controller) => controller.quoteHandleDecorations },
 		);
 		this.registerEditorExtension(dragExtension);
-		this.registerEvent(this.app.workspace.on("css-change", () => this.taskTypeEvents.trigger("changed")));
 		this.addCommand({
 			id: "cycle-list-item-type",
 			name: "Cycle current list item type",
@@ -2462,74 +2046,11 @@ export default class DragAndDropListsPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	async updateTaskType(id: string, updates: Partial<Omit<TaskTypeDefinition, "id">>): Promise<boolean> {
-		const index = this.settings.taskTypes.findIndex((taskType) => taskType.id === id);
-		if (index < 0) return false;
-		const current = this.settings.taskTypes[index];
-		if (!current) return false;
-		const updated = Object.assign({}, current, updates);
-		if (!isValidTaskMarker(updated.marker)) return false;
-		if (this.settings.taskTypes.some((taskType, otherIndex) => (
-			otherIndex !== index && taskType.marker === updated.marker
-		))) return false;
-		if (updated.name.trim().length === 0 || !isHeroIconName(updated.icon)
-			|| !isValidTaskColor(updated.color)
-			|| !isValidTaskAppearance(updated.appearance)) return false;
-		updated.name = updated.name.trim();
-		updated.color = updated.color?.toLowerCase() ?? null;
-		const taskTypes = this.settings.taskTypes.map((taskType, taskTypeIndex) => (
-			taskTypeIndex === index ? updated : taskType
-		));
-		await this.setTaskTypes(taskTypes);
-		return true;
-	}
-
-	async addTaskType(): Promise<boolean> {
-		const marker = findAvailableTaskMarker(this.settings.taskTypes);
-		if (!marker) {
-			new Notice("No unused task markers are available.");
-			return false;
-		}
-		await this.setTaskTypes([
-			...this.settings.taskTypes,
-			createTaskType(marker, Date.now()),
-		]);
-		return true;
-	}
-
-	async removeTaskType(id: string): Promise<void> {
-		await this.setTaskTypes(this.settings.taskTypes.filter((taskType) => taskType.id !== id));
-	}
-
-	async reorderTaskType(index: number, destination: number): Promise<void> {
-		if (index < 0 || destination < 0 || index >= this.settings.taskTypes.length
-			|| destination >= this.settings.taskTypes.length || index === destination) return;
-		const taskTypes = [...this.settings.taskTypes];
-		const taskType = taskTypes[index];
-		if (!taskType) return;
-		taskTypes.splice(index, 1);
-		taskTypes.splice(destination, 0, taskType);
-		await this.setTaskTypes(taskTypes);
-	}
-
-	async restoreDefaultTaskTypes(): Promise<void> {
-		await this.setTaskTypes(cloneDefaultTaskTypes());
-	}
-
-	private async setTaskTypes(taskTypes: TaskTypeDefinition[]): Promise<void> {
-		this.settings = Object.assign({}, this.settings, { taskTypes });
-		await this.saveData(this.settings);
-		this.taskTypeEvents.trigger("changed");
-	}
-
 	private cycleCurrentListItemType(editor: Editor, checking: boolean): boolean {
 		const cursor = editor.getCursor();
 		const original = editor.getLine(cursor.line);
-		const replacement = cycleListItemStatus(
-			original,
-			taskMarkersForCycle(this.settings.taskTypes),
-		);
-		if (replacement === null || replacement === original) return false;
+		const replacement = cycleListItemStatus(original);
+		if (replacement === null) return false;
 		if (!checking) {
 			const originalContentLength = parseListLine(original)?.content.length ?? 0;
 			const replacementContentLength = parseListLine(replacement)?.content.length ?? 0;

@@ -30,7 +30,6 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: production,
-	legalComments: "inline",
 });
 
 if (production) {

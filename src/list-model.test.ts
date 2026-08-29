@@ -77,25 +77,15 @@ describe("cycleListItemStatus", () => {
 		];
 		let line = "- Item";
 		for (const next of expected) {
-			line = cycleListItemStatus(line, [" ", "x", "/", "-", ">", "<", "?", "!", "*"]) ?? "";
+			line = cycleListItemStatus(line) ?? "";
 			expect(line).toBe(next);
 		}
 	});
 
 	it("treats uppercase completion as done and resets unknown statuses to a bullet", () => {
-		expect(cycleListItemStatus("- [X] Finished", ["x", "/"])).toBe("- [/] Finished");
-		expect(cycleListItemStatus("- [~] Custom", [" ", "x"])).toBe("- Custom");
-		expect(cycleListItemStatus("Paragraph", [" ", "x"])).toBeNull();
-	});
-
-	it("uses the configured order and custom markers", () => {
-		expect(cycleListItemStatus("- Item", ["?", "~"])).toBe("- [?] Item");
-		expect(cycleListItemStatus("- [?] Item", ["?", "~"])).toBe("- [~] Item");
-		expect(cycleListItemStatus("- [~] Item", ["?", "~"])).toBe("- Item");
-	});
-
-	it("does nothing when no task types are configured", () => {
-		expect(cycleListItemStatus("- Item", [])).toBe("- Item");
+		expect(cycleListItemStatus("- [X] Finished")).toBe("- [/] Finished");
+		expect(cycleListItemStatus("- [~] Custom")).toBe("- Custom");
+		expect(cycleListItemStatus("Paragraph")).toBeNull();
 	});
 });
 

@@ -27,6 +27,18 @@ const LIST_LINE_PATTERN = /^((?:(?: {0,3}|\t)>[ \t]?)*)([ \t]*)([-+*]|\d{1,9}[.)
 const EDITABLE_LIST_LINE_PATTERN = /^((?:(?: {0,3}|\t)>[ \t]?)*)([ \t]*)([-+*]|\d{1,9}[.)])([ \t]+)(?:\[([^\]\r\n]*)\]([ \t]+))?(.*)$/;
 const CONTAINER_PATTERN = /^((?:(?: {0,3}|\t)>[ \t]?)*)([ \t]*)(.*)$/;
 const QUOTE_SEGMENT_PATTERN = /^(?: {0,3}|\t)>[ \t]?/;
+const LIST_ITEM_STATUS_CYCLE: readonly (string | null)[] = [
+	null,
+	" ",
+	"x",
+	"/",
+	"-",
+	">",
+	"<",
+	"?",
+	"!",
+	"*",
+];
 function quoteDepth(prefix: string): number {
 	let depth = 0;
 	for (const character of prefix) {
@@ -77,15 +89,14 @@ export function changeListItemStatus(line: string, status: string | null): strin
 		: `${prefix}[${status}]${statusSpacing}${content}`;
 }
 
-export function cycleListItemStatus(line: string, taskStatuses: readonly string[]): string | null {
+export function cycleListItemStatus(line: string): string | null {
 	const currentStatus = parseListLine(line)?.taskStatus;
 	if (currentStatus === undefined) return null;
-	const statusCycle: readonly (string | null)[] = [null, ...taskStatuses];
-	const currentIndex = statusCycle.findIndex((status) => (
+	const currentIndex = LIST_ITEM_STATUS_CYCLE.findIndex((status) => (
 		status === "x" ? currentStatus?.toLowerCase() === "x" : status === currentStatus
 	));
-	const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % statusCycle.length;
-	return changeListItemStatus(line, statusCycle[nextIndex] ?? null);
+	const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % LIST_ITEM_STATUS_CYCLE.length;
+	return changeListItemStatus(line, LIST_ITEM_STATUS_CYCLE[nextIndex] ?? null);
 }
 
 function parseContainerLine(line: string): {
