@@ -1,6 +1,6 @@
 # Third-party notices
 
-## Heroicons Micro
+## Heroicons Micro and Outline
 
 Copyright (c) Tailwind Labs, Inc.
 

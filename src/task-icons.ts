@@ -1,4 +1,5 @@
 import { getHeroIcon, type HeroIconName } from "./heroicons-micro";
+import { getHeroIconOutline } from "./heroicons-outline";
 import { calculateIconOverlayGeometry, type IconOverlayGeometry } from "./icon-geometry";
 import type { TaskTypeAppearance, TaskTypeDefinition } from "./task-types";
 
@@ -21,8 +22,37 @@ function toggleClassIfChanged(element: HTMLElement, name: string, enabled: boole
 	if (element.hasClass(name) !== enabled) element.toggleClass(name, enabled);
 }
 
-export function renderHeroIcon(container: HTMLElement, iconName: HeroIconName): void {
+export type HeroIconVariant = "micro" | "outline";
+
+export function heroIconVariantForAppearance(appearance: TaskTypeAppearance): HeroIconVariant {
+	return appearance === "outlined" ? "outline" : "micro";
+}
+
+export function renderHeroIcon(
+	container: HTMLElement,
+	iconName: HeroIconName,
+	variant: HeroIconVariant = "micro",
+): void {
 	container.empty();
+	if (variant === "outline") {
+		const definition = getHeroIconOutline(iconName);
+		const svg = container.createSvg("svg", {
+			attr: {
+				"aria-hidden": "true",
+				fill: "none",
+				stroke: "currentColor",
+				"stroke-linejoin": "round",
+				"stroke-width": "1.5",
+				viewBox: "0 0 24 24",
+			},
+		});
+		for (const [d, roundLineCap] of definition.p) {
+			svg.createSvg("path", {
+				attr: { d, ...(roundLineCap ? { "stroke-linecap": "round" } : {}) },
+			});
+		}
+		return;
+	}
 	const definition = getHeroIcon(iconName);
 	const svg = container.createSvg("svg", {
 		attr: { "aria-hidden": "true", fill: "currentColor", viewBox: "0 0 16 16" },
@@ -130,9 +160,12 @@ export function applyTaskIcons(root: HTMLElement, measurements: readonly TaskIco
 			icon = parent.createSpan({ cls: ICON_CLASS, attr: { "aria-hidden": "true" } });
 			checkbox.insertAdjacentElement("afterend", icon);
 		}
-		if (icon.getAttribute("data-icon-id") !== taskType.icon) {
-			renderHeroIcon(icon, taskType.icon);
+		const variant = heroIconVariantForAppearance(taskType.appearance);
+		if (icon.getAttribute("data-icon-id") !== taskType.icon
+			|| icon.getAttribute("data-icon-variant") !== variant) {
+			renderHeroIcon(icon, taskType.icon, variant);
 			icon.setAttribute("data-icon-id", taskType.icon);
+			icon.setAttribute("data-icon-variant", variant);
 		}
 		setTaskIconAppearance(
 			icon, taskType.color, taskType.appearance, borderRadius || undefined, borderWidth || undefined,

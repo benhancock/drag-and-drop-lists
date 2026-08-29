@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && node esbuild.config.mjs production",
     "check": "npm test && npm run typecheck && npm run lint -- --max-warnings 0 && npm run build",
     "dev": "node esbuild.config.mjs",
-    "generate:icons": "node scripts/generate-heroicons-micro.mjs",
+		"generate:icons": "node scripts/generate-heroicons-micro.mjs && node scripts/generate-heroicons-outline.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

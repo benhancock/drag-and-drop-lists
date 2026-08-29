@@ -32,6 +32,7 @@ import {
 	applyTaskIcons,
 	clearTaskIcons,
 	measureTaskIcons,
+	heroIconVariantForAppearance,
 	renderHeroIcon,
 	setTaskIconAppearance,
 	syncTaskIcons,
@@ -2109,7 +2110,7 @@ class HeroIconSuggestModal extends SuggestModal<HeroIconName> {
 			cls: "drag-and-drop-lists-heroicon-suggestion-preview",
 			attr: { "aria-hidden": "true" },
 		});
-		renderHeroIcon(preview, iconName);
+		renderHeroIcon(preview, iconName, heroIconVariantForAppearance(this.appearance));
 		setTaskIconAppearance(preview, this.color, this.appearance);
 		element.createSpan({ text: formatHeroIconName(iconName) });
 		if (iconName === this.currentIcon) {
@@ -2401,7 +2402,7 @@ class DragAndDropListsSettingTab extends PluginSettingTab {
 			cls: "drag-and-drop-lists-task-type-glyph",
 			attr: { "aria-hidden": "true" },
 		});
-		renderHeroIcon(glyph, icon);
+		renderHeroIcon(glyph, icon, heroIconVariantForAppearance(appearance));
 		setTaskIconAppearance(glyph, color, appearance);
 	}
 

@@ -58,8 +58,8 @@ Unchecked (`[ ]`) and completed (`[x]`) tasks use the active theme's native styl
 - A name shown in settings.
 - One character stored between the Markdown brackets. Use `space` for an unchecked task.
 - A searchable Heroicons Micro icon rendered in Live Preview.
-- A filled-background, icon-only, or outlined appearance.
-- An optional color applied to the background or bare icon. Reset it to follow the active theme's accent color.
+- A filled-background or icon-only Heroicons Micro appearance, or the matching official Heroicons Outline icon in a regular task outline.
+- An optional color applied to the background or icon. Reset it to follow the active theme's accent color.
 
 The regular Markdown bullet, unchecked task, and completed task are always the first three states. Task types can be added, removed, or reordered, and the default custom collection can be restored at any time. Invalid or duplicate markers are not saved.
 
