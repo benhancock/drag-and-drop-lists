@@ -33,6 +33,18 @@
 	cursor: grabbing;
 }
 
+body:not(.is-mobile) .markdown-source-view .task-list-label {
+	cursor: auto;
+}
+
+body:not(.is-mobile) .markdown-source-view .task-list-label::after {
+	display: none;
+}
+
+body:not(.is-mobile) .markdown-source-view .task-list-label .task-list-item-checkbox {
+	cursor: grab;
+}
+
 .cm-editor.drag-and-drop-lists-active,
 .cm-editor.drag-and-drop-lists-active * {
 	cursor: grabbing;

@@ -7,10 +7,12 @@ import {
 	isTouchPointer,
 	nearestTouchTarget,
 	nearestVerticalTarget,
+	pointWithinHitRect,
+	taskPointerWithinHitArea,
 	touchGestureEventPolicy,
 } from "./interaction";
 
-describe("mobile pointer behavior", () => {
+describe("pointer behavior", () => {
 	it("recognizes touch without treating pen or mouse input as touch", () => {
 		expect(isTouchPointer("touch")).toBe(true);
 		expect(isTouchPointer("pen")).toBe(false);
@@ -30,6 +32,18 @@ describe("mobile pointer behavior", () => {
 	it("keeps small touch movement as a tap but claims movement at the drag threshold", () => {
 		expect(hasReachedDragStartThreshold(10, 20, 16, 27, true)).toBe(false);
 		expect(hasReachedDragStartThreshold(10, 20, 16, 28, true)).toBe(true);
+	});
+
+	it("limits desktop checkbox pickup to a modest area around the visible control", () => {
+		const checkbox = { left: 100, right: 118, top: 50, bottom: 68 };
+		expect(pointWithinHitRect(109, 59, checkbox, 4)).toBe(true);
+		expect(pointWithinHitRect(96, 46, checkbox, 4)).toBe(true);
+		expect(pointWithinHitRect(122, 72, checkbox, 4)).toBe(true);
+		expect(pointWithinHitRect(95, 59, checkbox, 4)).toBe(false);
+		expect(pointWithinHitRect(123, 73, checkbox, 4)).toBe(false);
+		expect(pointWithinHitRect(140, 59, checkbox, 4)).toBe(false);
+		expect(taskPointerWithinHitArea(false, 140, 59, checkbox, 4)).toBe(false);
+		expect(taskPointerWithinHitArea(true, 140, 59, checkbox, 4)).toBe(true);
 	});
 
 	it("claims marker touches immediately but leaves terminal events available to other gestures", () => {

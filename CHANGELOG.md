@@ -2,6 +2,10 @@
 
 All notable changes to Drag and Drop Lists are documented here.
 
+## 1.0.1 - 2026-10-24
+
+- Tighten the desktop checkbox drag target while preserving expanded touch targeting on mobile.
+
 ## 1.0.0 - 2026-08-27
 
 - Add marker-based drag and drop for unordered, numbered, and task-list items in Live Preview.

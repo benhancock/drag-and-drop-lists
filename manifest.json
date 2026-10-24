@@ -1,7 +1,7 @@
 {
   "id": "drag-and-drop-lists",
   "name": "Drag and Drop Lists",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.13.7",
   "description": "Reorder list items by dragging their markers, with animated previews and mobile task status controls.",
   "author": "Ben Hancock",

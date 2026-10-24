@@ -22,6 +22,7 @@ import {
 	isTouchPointer,
 	nearestTouchTarget,
 	nearestVerticalTarget,
+	taskPointerWithinHitArea,
 	touchGestureEventPolicy,
 	type TouchGestureEventPolicy,
 	type TouchTargetGeometry,
@@ -72,6 +73,7 @@ const GHOST_TOUCH_LANDING_DURATION_MS = 240;
 const DESKTOP_RENDER_SETTLE_FRAMES = 2;
 const MOBILE_TOUCH_HIT_RADIUS = 22;
 const MOBILE_TOUCH_ROW_SLOP = 10;
+const DESKTOP_TASK_HIT_SLOP = 4;
 interface DropTarget {
 	block: ListBlock;
 	line: number;
@@ -428,13 +430,21 @@ class DragController implements PluginValue {
 		if (!handle || !this.view.contentDOM.contains(handle)) return;
 		const row = touchTarget?.row ?? handle.closest<HTMLElement>(LIST_LINE_SELECTOR);
 		if (!row) return;
+		const originElement = touchTarget?.originElement ?? handleOriginElement(handle);
+		if (handle.matches(TASK_HANDLE_SELECTOR)
+			&& !taskPointerWithinHitArea(
+				touchPointer,
+				event.clientX,
+				event.clientY,
+				originElement.getBoundingClientRect(),
+				DESKTOP_TASK_HIT_SLOP,
+			)) return;
 		const position = this.view.posAtDOM(row, 0);
 		const lineNumber = this.view.state.doc.lineAt(position).number;
 		const lines = this.view.state.doc.toString().split("\n");
 		const source = findListBlock(lines, lineNumber - 1)
 			?? findContainingListBlock(lines, lineNumber - 1);
 		if (!source) return;
-		const originElement = touchTarget?.originElement ?? handleOriginElement(handle);
 		const tapActivationElement = touchPointer
 			&& originElement.matches(".task-list-item-checkbox")
 			? originElement

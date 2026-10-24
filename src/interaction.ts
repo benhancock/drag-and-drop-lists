@@ -20,6 +20,13 @@ export interface VerticalTargetGeometry<T> {
 	bottom: number;
 }
 
+export interface HitRectGeometry {
+	left: number;
+	right: number;
+	top: number;
+	bottom: number;
+}
+
 export type TouchGesturePhase = "start" | "move" | "terminal";
 
 export function isTouchPointer(pointerType: string): boolean {
@@ -42,6 +49,28 @@ export function hasReachedDragStartThreshold(
 	touchPointer: boolean,
 ): boolean {
 	return Math.hypot(currentX - startX, currentY - startY) >= dragStartThreshold(touchPointer);
+}
+
+export function pointWithinHitRect(
+	clientX: number,
+	clientY: number,
+	rect: HitRectGeometry,
+	hitSlop: number,
+): boolean {
+	return clientX >= rect.left - hitSlop
+		&& clientX <= rect.right + hitSlop
+		&& clientY >= rect.top - hitSlop
+		&& clientY <= rect.bottom + hitSlop;
+}
+
+export function taskPointerWithinHitArea(
+	touchPointer: boolean,
+	clientX: number,
+	clientY: number,
+	rect: HitRectGeometry,
+	hitSlop: number,
+): boolean {
+	return touchPointer || pointWithinHitRect(clientX, clientY, rect, hitSlop);
 }
 
 export function touchGestureEventPolicy(

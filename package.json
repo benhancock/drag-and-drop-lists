@@ -1,6 +1,6 @@
 {
   "name": "drag-and-drop-lists",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Reorder list items by dragging their markers, with animated previews and mobile task status controls.",
   "private": true,
   "main": "main.js",
