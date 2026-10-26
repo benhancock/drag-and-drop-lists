@@ -2,6 +2,13 @@
 
 All notable changes to Drag and Drop Lists are documented here.
 
+## 1.1.0 - 2026-10-26
+
+- Preserve collapsed list-item state when moving an item and its hidden subtree.
+- Indent and resize the live destination placeholder to match the target nesting level.
+- Add optional completed-task fading, nested-bullet fading, and partial-progress indicators.
+- Add desktop Shift-click cycling through Minimal's documented alternate task markers.
+
 ## 1.0.1 - 2026-10-24
 
 - Tighten the desktop checkbox drag target while preserving expanded touch targeting on mobile.

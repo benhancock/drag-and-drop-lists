@@ -21,6 +21,12 @@ export interface MoveResult {
 	originalLineIndexes: number[];
 }
 
+export interface CompletedListLineKinds {
+	completedTaskLineIndexes: ReadonlySet<number>;
+	completedDescendantBulletLineIndexes: ReadonlySet<number>;
+	partiallyCompletedTaskLineIndexes: ReadonlySet<number>;
+}
+
 export type DropSide = "before" | "after";
 
 const LIST_LINE_PATTERN = /^((?:(?: {0,3}|\t)>[ \t]?)*)([ \t]*)([-+*]|\d{1,9}[.)])[ \t]+(?:\[([^\]\r\n]*)\][ \t]+)?(.*)$/;
@@ -38,6 +44,30 @@ const LIST_ITEM_STATUS_CYCLE: readonly (string | null)[] = [
 	"?",
 	"!",
 	"*",
+];
+const MINIMAL_TASK_STATUS_CYCLE: readonly string[] = [
+	" ",
+	"/",
+	"x",
+	"-",
+	">",
+	"<",
+	"?",
+	"!",
+	"*",
+	"\"",
+	"l",
+	"b",
+	"i",
+	"S",
+	"I",
+	"p",
+	"c",
+	"f",
+	"k",
+	"w",
+	"u",
+	"d",
 ];
 function quoteDepth(prefix: string): number {
 	let depth = 0;
@@ -71,6 +101,71 @@ export function parseListLine(line: string): ParsedListLine | null {
 	};
 }
 
+export function classifyCompletedListLines(
+	lines: readonly string[],
+): CompletedListLineKinds {
+	const completedTaskLineIndexes = new Set<number>();
+	const completedDescendantBulletLineIndexes = new Set<number>();
+	const partiallyCompletedTaskLineIndexes = new Set<number>();
+	const ancestors: Array<{
+		childIndentWidth: number;
+		lineIndex: number;
+		quoteDepth: number;
+		taskStatus: string | null;
+	}> = [];
+
+	for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+		const item = parseListLine(lines[lineIndex] ?? "");
+		if (!item) {
+			ancestors.length = 0;
+			continue;
+		}
+
+		const itemIndentWidth = indentationWidth(item.indent);
+		while (ancestors.length > 0) {
+			const parent = ancestors[ancestors.length - 1];
+			if (parent
+				&& parent.quoteDepth === item.quoteDepth
+				&& itemIndentWidth >= parent.childIndentWidth) break;
+			ancestors.pop();
+		}
+
+		if (item.taskStatus?.toLowerCase() === "x") {
+			completedTaskLineIndexes.add(lineIndex);
+			for (const ancestor of ancestors) {
+				if (ancestor.taskStatus !== null && ancestor.taskStatus.trim().length === 0) {
+					partiallyCompletedTaskLineIndexes.add(ancestor.lineIndex);
+				}
+			}
+		}
+		if (item.taskStatus === null && item.marker === "-") {
+			let nearestTaskStatus: string | null = null;
+			for (let ancestorIndex = ancestors.length - 1; ancestorIndex >= 0; ancestorIndex -= 1) {
+				const ancestorStatus = ancestors[ancestorIndex]?.taskStatus;
+				if (ancestorStatus === null || ancestorStatus === undefined) continue;
+				nearestTaskStatus = ancestorStatus;
+				break;
+			}
+			if (nearestTaskStatus?.toLowerCase() === "x") {
+				completedDescendantBulletLineIndexes.add(lineIndex);
+			}
+		}
+
+		ancestors.push({
+			childIndentWidth: itemIndentWidth + item.marker.length + 1,
+			lineIndex,
+			quoteDepth: item.quoteDepth,
+			taskStatus: item.taskStatus,
+		});
+	}
+
+	return {
+		completedTaskLineIndexes,
+		completedDescendantBulletLineIndexes,
+		partiallyCompletedTaskLineIndexes,
+	};
+}
+
 export function changeListItemStatus(line: string, status: string | null): string | null {
 	if (status !== null && (status.length !== 1 || status === "]" || /[\r\n]/.test(status))) return null;
 	const match = EDITABLE_LIST_LINE_PATTERN.exec(line);
@@ -97,6 +192,16 @@ export function cycleListItemStatus(line: string): string | null {
 	));
 	const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % LIST_ITEM_STATUS_CYCLE.length;
 	return changeListItemStatus(line, LIST_ITEM_STATUS_CYCLE[nextIndex] ?? null);
+}
+
+export function cycleMinimalTaskStatus(line: string): string | null {
+	const currentStatus = parseListLine(line)?.taskStatus;
+	if (currentStatus === undefined || currentStatus === null) return null;
+	const currentIndex = MINIMAL_TASK_STATUS_CYCLE.findIndex((status) => (
+		status === "x" ? currentStatus.toLowerCase() === "x" : status === currentStatus
+	));
+	const nextIndex = (currentIndex + 1) % MINIMAL_TASK_STATUS_CYCLE.length;
+	return changeListItemStatus(line, MINIMAL_TASK_STATUS_CYCLE[nextIndex] ?? " ");
 }
 
 function parseContainerLine(line: string): {

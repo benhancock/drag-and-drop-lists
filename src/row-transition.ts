@@ -46,6 +46,11 @@ export interface ListProjection {
 	lineOffset: (lineIndex: number) => number;
 }
 
+export interface PlaceholderHorizontalGeometry {
+	left: number;
+	width: number;
+}
+
 function clamp(value: number, minimum: number, maximum: number): number {
 	return Math.min(maximum, Math.max(minimum, value));
 }
@@ -78,6 +83,21 @@ export function calculateListProjection(
 				&& lineIndex < sourceStart) return sourceHeight;
 			return 0;
 		},
+	};
+}
+
+export function calculatePlaceholderHorizontalGeometry(
+	content: Pick<RectLike, "left" | "width">,
+	marker: Pick<RectLike, "left"> | null,
+	isNested: boolean,
+): PlaceholderHorizontalGeometry {
+	const contentRight = content.left + content.width;
+	const left = isNested && marker
+		? clamp(marker.left, content.left, Math.max(content.left, contentRight - 1))
+		: content.left;
+	return {
+		left,
+		width: Math.max(1, contentRight - left),
 	};
 }
 

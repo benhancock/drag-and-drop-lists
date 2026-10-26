@@ -17,11 +17,16 @@ Drag and Drop Lists works on desktop and mobile. The dragged item follows the po
 - Choose whether the cursor lands at the beginning or end of the moved line.
 - Move the current list item up or down from the command palette.
 - Cycle through common task types from Obsidian's configurable mobile toolbar.
+- Cycle through Minimal-compatible task markers by Shift-clicking a checkbox on desktop.
+- Preserve collapsed list items and show nesting depth in the live destination placeholder.
+- Optionally fade completed tasks, fade their nested bullets, and mark partial parent progress.
 - Work with blockquotes and mixed tab-and-space indentation.
 
 ## Usage
 
 In Live Preview, press or click a bullet, number, or task checkbox and drag it vertically. Release over the projected gap to place the item there. Release outside a valid list target, or press `Escape` on desktop, to cancel the move.
+
+On desktop, Shift-click a task checkbox to cycle through Minimal's documented alternate task markers. The plugin changes only the character inside the brackets; the active theme or CSS snippets control its appearance.
 
 Touch interactions use an expanded marker hit area, a brief pickup delay, a mobile drag threshold, and a preview positioned beneath the finger. A quick checkbox tap still toggles it without showing the drag preview. Native text selection and workspace swipe gestures remain available when a list drag is not active.
 
@@ -52,6 +57,12 @@ The active theme or CSS snippets control how alternate task markers appear. Drag
 
 ## Settings
 
+**Fade completed tasks** replaces completed-task strikethrough with muted text while preserving the checkbox appearance.
+
+**Fade nested bullets** also mutes nested dash bullets whose nearest task parent is completed.
+
+**Show partial task progress** adds a slash to an unchecked parent task when at least one nested task is completed.
+
 **Cursor placement** controls whether the caret appears at the beginning or end of the moved item's first line after a drop.
 
 ## Compatibility
@@ -80,7 +91,7 @@ Reload Obsidian, then enable **Drag and Drop Lists** under **Community plugins**
 
 ## Privacy
 
-Drag and Drop Lists processes the active editor locally. It does not make network requests, collect analytics, access the clipboard, or read and write files through the vault API. It saves the cursor-placement preference in the plugin's local settings data.
+Drag and Drop Lists processes the active editor locally. It does not make network requests, collect analytics, access the clipboard, or read and write files through the vault API. It saves its appearance and cursor-placement preferences in the plugin's local settings data.
 
 ## Development
 

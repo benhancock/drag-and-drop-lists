@@ -14,6 +14,7 @@ import {
 	PluginSettingTab,
 	type SettingDefinitionItem,
 } from "obsidian";
+import { restoreCollapsedListFold } from "./fold-state";
 import { editorOwnsGestureStart, markerIsExposed } from "./gesture-surface";
 import {
 	autoScrollConfig,
@@ -28,7 +29,9 @@ import {
 	type TouchTargetGeometry,
 } from "./interaction";
 import {
+	classifyCompletedListLines,
 	cycleListItemStatus,
+	cycleMinimalTaskStatus,
 	findContainingListBlock,
 	findListBlock,
 	findSiblingListBlock,
@@ -46,6 +49,7 @@ import {
 	calculateGhostPickup,
 	calculateGhostRowAlignment,
 	calculateListProjection,
+	calculatePlaceholderHorizontalGeometry,
 	calculateProjectedLandingTarget,
 	calculateProjectionDeltas,
 	calculateRowDeltas,
@@ -86,14 +90,21 @@ type CursorPlacement = "beginning" | "end";
 
 interface DragAndDropListsSettings {
 	cursorPlacement: CursorPlacement;
+	greyCompletedTasks: boolean;
+	greyNestedBullets: boolean;
+	showPartialTaskProgress: boolean;
 }
 
 const DEFAULT_SETTINGS: DragAndDropListsSettings = {
 	cursorPlacement: "beginning",
+	greyCompletedTasks: false,
+	greyNestedBullets: false,
+	showPartialTaskProgress: false,
 };
 
 interface DragContext {
 	source: ListBlock;
+	sourceCollapsed: boolean;
 	ghost: HTMLElement;
 	placeholder: HTMLElement;
 	placeholderHeight: number;
@@ -114,6 +125,7 @@ interface PendingDrag {
 	preview: HTMLElement | null;
 	pickupReady: boolean;
 	source: ListBlock;
+	sourceCollapsed: boolean;
 	touchPointer: boolean;
 }
 
@@ -181,7 +193,12 @@ interface GhostPickupSource {
 	borderRadius: string;
 }
 
-function makeQuoteHandleDecorations(view: EditorView): DecorationSet {
+function makeEditorDecorations(
+	view: EditorView,
+	completedTaskLineIndexes: ReadonlySet<number>,
+	completedDescendantBulletLineIndexes: ReadonlySet<number>,
+	partiallyCompletedTaskLineIndexes: ReadonlySet<number>,
+): DecorationSet {
 	const ranges = [];
 	const seenLines = new Set<number>();
 	for (const visibleRange of view.visibleRanges) {
@@ -191,8 +208,19 @@ function makeQuoteHandleDecorations(view: EditorView): DecorationSet {
 			if (seenLines.has(lineNumber)) continue;
 			seenLines.add(lineNumber);
 			const line = view.state.doc.line(lineNumber);
-			if ((parseListLine(line.text)?.quoteDepth ?? 0) > 0) {
-				ranges.push(Decoration.line({ class: "drag-and-drop-lists-quote-list" }).range(line.from));
+			const classes = [];
+			if ((parseListLine(line.text)?.quoteDepth ?? 0) > 0) classes.push("drag-and-drop-lists-quote-list");
+			if (completedTaskLineIndexes.has(lineNumber - 1)) {
+				classes.push("drag-and-drop-lists-completed-task");
+			}
+			if (completedDescendantBulletLineIndexes.has(lineNumber - 1)) {
+				classes.push("drag-and-drop-lists-completed-descendant");
+			}
+			if (partiallyCompletedTaskLineIndexes.has(lineNumber - 1)) {
+				classes.push("drag-and-drop-lists-partial-task");
+			}
+			if (classes.length > 0) {
+				ranges.push(Decoration.line({ class: classes.join(" ") }).range(line.from));
 			}
 		}
 	}
@@ -243,6 +271,10 @@ function findLandingAnchor(row: HTMLElement | null): HTMLElement | null {
 	return null;
 }
 
+function isCollapsedListRow(row: HTMLElement): boolean {
+	return row.querySelector(".cm-fold-indicator.is-collapsed") !== null;
+}
+
 function applyEditorMove(
 	editor: Editor,
 	source: ListBlock,
@@ -283,7 +315,10 @@ function applyEditorMove(
 }
 
 class DragController implements PluginValue {
-	quoteHandleDecorations: DecorationSet;
+	editorDecorations: DecorationSet;
+	private completedTaskLineIndexes: ReadonlySet<number>;
+	private completedDescendantBulletLineIndexes: ReadonlySet<number>;
+	private partiallyCompletedTaskLineIndexes: ReadonlySet<number>;
 	private context: DragContext | null = null;
 	private pending: PendingDrag | null = null;
 	private ownedTouch: OwnedTouch | null = null;
@@ -294,6 +329,7 @@ class DragController implements PluginValue {
 	private autoScrollTimer: number | null = null;
 	private touchPickupTimer: number | null = null;
 	private cursorRestoreFrame: number | null = null;
+	private restoringFold = false;
 	private pendingRowTransition: PendingRowTransition | null = null;
 	private desktopLanding: PendingDesktopLanding | null = null;
 	private readonly exitingGhosts = new Set<HTMLElement>();
@@ -342,7 +378,16 @@ class DragController implements PluginValue {
 		if (!viewWindow) throw new Error("The editor window is unavailable.");
 		this.viewWindow = viewWindow;
 		this.eventDocument = view.dom.ownerDocument;
-		this.quoteHandleDecorations = makeQuoteHandleDecorations(view);
+		const completedLines = classifyCompletedListLines(view.state.doc.toString().split("\n"));
+		this.completedTaskLineIndexes = completedLines.completedTaskLineIndexes;
+		this.completedDescendantBulletLineIndexes = completedLines.completedDescendantBulletLineIndexes;
+		this.partiallyCompletedTaskLineIndexes = completedLines.partiallyCompletedTaskLineIndexes;
+		this.editorDecorations = makeEditorDecorations(
+			view,
+			this.completedTaskLineIndexes,
+			this.completedDescendantBulletLineIndexes,
+			this.partiallyCompletedTaskLineIndexes,
+		);
 		this.eventDocument.addEventListener("pointerdown", this.onPointerDown, true);
 		this.eventDocument.addEventListener("pointermove", this.onPointerMove, true);
 		this.eventDocument.addEventListener("pointerup", this.onPointerUp, true);
@@ -386,6 +431,7 @@ class DragController implements PluginValue {
 	}
 
 	update(update: ViewUpdate): void {
+		const restoringFoldViewport = this.restoringFold && !update.docChanged;
 		if (this.desktopLanding && update.docChanged && !this.desktopLanding.committing) {
 			this.cancelDesktopLanding();
 		}
@@ -393,13 +439,24 @@ class DragController implements PluginValue {
 		if (rowTransition) {
 			this.pendingRowTransition = null;
 			this.scheduleRowTransition(rowTransition);
-		} else if (update.docChanged || update.viewportChanged) {
+		} else if ((update.docChanged || update.viewportChanged) && !restoringFoldViewport) {
 			this.pendingRowTransition = null;
 			this.cancelRowAnimations();
 			this.cancelGhostLandingAnimations();
 		}
+		if (update.docChanged) {
+			const completedLines = classifyCompletedListLines(update.state.doc.toString().split("\n"));
+			this.completedTaskLineIndexes = completedLines.completedTaskLineIndexes;
+			this.completedDescendantBulletLineIndexes = completedLines.completedDescendantBulletLineIndexes;
+			this.partiallyCompletedTaskLineIndexes = completedLines.partiallyCompletedTaskLineIndexes;
+		}
 		if (update.docChanged || update.viewportChanged) {
-			this.quoteHandleDecorations = makeQuoteHandleDecorations(update.view);
+			this.editorDecorations = makeEditorDecorations(
+				update.view,
+				this.completedTaskLineIndexes,
+				this.completedDescendantBulletLineIndexes,
+				this.partiallyCompletedTaskLineIndexes,
+			);
 		}
 		if (update.viewportChanged && this.pending?.preview) {
 			this.hidePendingSourceRows(this.pending.source);
@@ -462,6 +519,7 @@ class DragController implements PluginValue {
 			preview: null,
 			pickupReady: !touchPointer,
 			source,
+			sourceCollapsed: isCollapsedListRow(row),
 			touchPointer,
 		};
 		if (!handle.matches(TASK_HANDLE_SELECTOR)) {
@@ -606,6 +664,7 @@ class DragController implements PluginValue {
 					target,
 					context.ghost,
 					context.placeholder,
+					context.sourceCollapsed,
 					context.touchPointer,
 				)
 				: false;
@@ -712,6 +771,7 @@ class DragController implements PluginValue {
 			landing.target,
 			landing.context.ghost,
 			landing.context.placeholder,
+			landing.context.sourceCollapsed,
 			false,
 			desktopPrelanded,
 		);
@@ -844,11 +904,39 @@ class DragController implements PluginValue {
 	}
 
 	private click(event: MouseEvent): void {
-		if (Date.now() > this.suppressClickUntil) return;
 		if (closestElement(event.target, ".cm-content") !== this.view.contentDOM) return;
+		if (Date.now() <= this.suppressClickUntil) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			this.suppressClickUntil = 0;
+			return;
+		}
+		if (!event.shiftKey || !this.cycleClickedTask(event)) return;
 		event.preventDefault();
 		event.stopImmediatePropagation();
-		this.suppressClickUntil = 0;
+	}
+
+	private cycleClickedTask(event: MouseEvent): boolean {
+		const checkbox = closestElement(event.target, ".task-list-item-checkbox");
+		if (!checkbox || !this.view.contentDOM.contains(checkbox)) return false;
+		const row = checkbox.closest<HTMLElement>(LIST_LINE_SELECTOR);
+		if (!row) return false;
+		const info = this.view.state.field(editorInfoField, false);
+		const editor = info?.editor;
+		if (!editor) return false;
+		const lineNumber = this.view.state.doc.lineAt(this.view.posAtDOM(row, 0)).number;
+		const lineIndex = lineNumber - 1;
+		const original = editor.getLine(lineIndex);
+		const replacement = cycleMinimalTaskStatus(original);
+		if (replacement === null) return false;
+		editor.transaction({
+			changes: [{
+				from: { line: lineIndex, ch: 0 },
+				to: { line: lineIndex, ch: original.length },
+				text: replacement,
+			}],
+		}, PLUGIN_ID);
+		return true;
 	}
 
 	private beginDrag(pending: PendingDrag, clientX: number, clientY: number): void {
@@ -865,9 +953,13 @@ class DragController implements PluginValue {
 			?.querySelector<HTMLElement>(".drag-and-drop-lists-ghost-row")
 			?.getBoundingClientRect() ?? null;
 		pending.preview = null;
-		const ghost = pendingPreview ?? this.createGhost(pending.source, pickupSource?.rect.width);
+		const ghost = pendingPreview ?? this.createGhost(
+			pending.source,
+			pickupSource?.rect.width,
+			pending.sourceCollapsed,
+		);
 		ghost.addClass("drag-and-drop-lists-ghost-under-pointer");
-		const placeholderHeight = this.sourceBlockHeight(pending.source);
+		const placeholderHeight = this.sourceBlockHeight(pending.source, pending.sourceCollapsed);
 		const placeholder = this.view.dom.ownerDocument.body.createDiv({
 			cls: "drag-and-drop-lists-placeholder drag-and-drop-lists-placeholder-initial",
 			attr: { "aria-hidden": "true" },
@@ -875,6 +967,7 @@ class DragController implements PluginValue {
 		placeholder.setCssProps({ "--drag-and-drop-lists-placeholder-height": `${placeholderHeight}px` });
 		this.context = {
 			source: pending.source,
+			sourceCollapsed: pending.sourceCollapsed,
 			ghost,
 			placeholder,
 			placeholderHeight,
@@ -899,7 +992,11 @@ class DragController implements PluginValue {
 	private createPendingTouchPreview(pending: PendingDrag): HTMLElement | null {
 		const pickupSource = this.ghostPickupSource(pending.rowElement);
 		if (!pickupSource) return null;
-		const ghost = this.createGhost(pending.source, pickupSource.rect.width);
+		const ghost = this.createGhost(
+			pending.source,
+			pickupSource.rect.width,
+			pending.sourceCollapsed,
+		);
 		ghost.addClass("drag-and-drop-lists-ghost-under-pointer", "drag-and-drop-lists-ghost-pending");
 		ghost.setCssProps({
 			"--drag-and-drop-lists-pickup-background": pickupSource.backgroundColor,
@@ -942,7 +1039,11 @@ class DragController implements PluginValue {
 		};
 	}
 
-	private createGhost(source: ListBlock, sourceRowWidth?: number): HTMLElement {
+	private createGhost(
+		source: ListBlock,
+		sourceRowWidth?: number,
+		sourceCollapsed = false,
+	): HTMLElement {
 		const ghost = this.view.dom.ownerDocument.body.createDiv({ cls: "drag-and-drop-lists-ghost" });
 		if (sourceRowWidth !== undefined) {
 			const ghostStyle = this.viewWindow.getComputedStyle(ghost);
@@ -964,7 +1065,8 @@ class DragController implements PluginValue {
 		this.copyClasses(this.view.contentDOM, contentContext);
 		const baseIndent = indentationWidth(source.indent);
 		const rowGeometries: GhostRowSourceGeometry[] = [];
-		for (let lineNumber = source.start; lineNumber <= source.end; lineNumber += 1) {
+		const previewEndLine = sourceCollapsed ? source.start : source.end;
+		for (let lineNumber = source.start; lineNumber <= previewEndLine; lineNumber += 1) {
 			const line = this.view.state.doc.line(lineNumber);
 			const dom = this.view.domAtPos(line.from).node;
 			const row = closestElement(dom, ".cm-line");
@@ -1024,9 +1126,9 @@ class DragController implements PluginValue {
 		return ghost;
 	}
 
-	private sourceBlockHeight(source: ListBlock): number {
+	private sourceBlockHeight(source: ListBlock, sourceCollapsed: boolean): number {
 		const firstLine = this.view.state.doc.line(source.start);
-		const lastLine = this.view.state.doc.line(source.end);
+		const lastLine = this.view.state.doc.line(sourceCollapsed ? source.start : source.end);
 		return calculateBlockSpanHeight(
 			this.view.lineBlockAt(firstLine.from),
 			this.view.lineBlockAt(lastLine.from),
@@ -1077,10 +1179,20 @@ class DragController implements PluginValue {
 			this.projectedRows.add(row);
 		}
 		const contentRect = this.view.contentDOM.getBoundingClientRect();
+		const destinationLineIndex = context.target
+			? context.target.block.start - 1
+			: sourceStart;
+		const destinationBlock = context.target?.block ?? context.source;
+		const destinationMarker = findLandingAnchor(visibleRows.get(destinationLineIndex) ?? null);
+		const placeholderHorizontal = calculatePlaceholderHorizontalGeometry(
+			contentRect,
+			destinationMarker?.getBoundingClientRect() ?? null,
+			indentationWidth(destinationBlock.indent) > 0,
+		);
 		context.placeholder.setCssProps({
-			"--drag-and-drop-lists-placeholder-x": `${contentRect.left}px`,
+			"--drag-and-drop-lists-placeholder-x": `${placeholderHorizontal.left}px`,
 			"--drag-and-drop-lists-placeholder-y": `${this.view.documentTop + projection.placeholderTop}px`,
-			"--drag-and-drop-lists-placeholder-width": `${contentRect.width}px`,
+			"--drag-and-drop-lists-placeholder-width": `${placeholderHorizontal.width}px`,
 		});
 	}
 
@@ -1287,6 +1399,7 @@ class DragController implements PluginValue {
 		target: DropTarget,
 		ghost: HTMLElement,
 		placeholder: HTMLElement,
+		sourceCollapsed: boolean,
 		sharedElementHandoff: boolean,
 		desktopPrelanded = false,
 	): boolean {
@@ -1315,6 +1428,14 @@ class DragController implements PluginValue {
 				);
 			},
 			(cursor) => {
+				if (sourceCollapsed) {
+					this.restoringFold = true;
+					try {
+						restoreCollapsedListFold(editor, cursor, true);
+					} finally {
+						this.restoringFold = false;
+					}
+				}
 				this.cursorRestoreFrame = this.viewWindow.requestAnimationFrame(() => {
 					this.cursorRestoreFrame = null;
 					editor.setCursor(cursor);
@@ -1997,6 +2118,45 @@ class DragAndDropListsSettingTab extends PluginSettingTab {
 	getSettingDefinitions(): SettingDefinitionItem[] {
 		return [
 			{
+				name: "Fade completed tasks",
+				desc: "Show completed task text in a muted color instead of striking it through. The checkbox keeps its normal appearance.",
+				render: (setting) => {
+					setting.addToggle((toggle) => {
+						toggle
+							.setValue(this.plugin.settings.greyCompletedTasks)
+							.onChange(async (value) => {
+								await this.plugin.setGreyCompletedTasks(value);
+							});
+					});
+				},
+			},
+			{
+				name: "Fade nested bullets",
+				desc: "Mute nested dash bullets whose nearest task parent is completed.",
+				render: (setting) => {
+					setting.addToggle((toggle) => {
+						toggle
+							.setValue(this.plugin.settings.greyNestedBullets)
+							.onChange(async (value) => {
+								await this.plugin.setGreyNestedBullets(value);
+							});
+					});
+				},
+			},
+			{
+				name: "Show partial task progress",
+				desc: "Show a slash in an unchecked parent task when at least one nested task is completed.",
+				render: (setting) => {
+					setting.addToggle((toggle) => {
+						toggle
+							.setValue(this.plugin.settings.showPartialTaskProgress)
+							.onChange(async (value) => {
+								await this.plugin.setShowPartialTaskProgress(value);
+							});
+					});
+				},
+			},
+			{
 				name: "Cursor placement",
 				desc: "Choose where the caret appears after moving a list item.",
 				render: (setting) => {
@@ -2018,18 +2178,40 @@ class DragAndDropListsSettingTab extends PluginSettingTab {
 
 export default class DragAndDropListsPlugin extends Plugin {
 	settings: DragAndDropListsSettings = DEFAULT_SETTINGS;
+	private readonly appearanceDocuments = new Set<Document>();
 
 	async onload(): Promise<void> {
-		const stored = await this.loadData() as { cursorPlacement?: unknown } | null;
+		const stored = await this.loadData() as {
+			cursorPlacement?: unknown;
+			greyCompletedTasks?: unknown;
+			greyNestedBullets?: unknown;
+			showPartialTaskProgress?: unknown;
+		} | null;
 		const cursorPlacement = stored?.cursorPlacement === "end" ? "end" : "beginning";
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, { cursorPlacement });
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, {
+			cursorPlacement,
+			greyCompletedTasks: stored?.greyCompletedTasks === true,
+			greyNestedBullets: stored?.greyNestedBullets === true,
+			showPartialTaskProgress: stored?.showPartialTaskProgress === true,
+		});
+		this.addAppearanceDocument(this.app.workspace.containerEl.ownerDocument);
+		this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, window) => {
+			this.addAppearanceDocument(window.document);
+		}));
+		this.registerEvent(this.app.workspace.on("window-close", (_workspaceWindow, window) => {
+			this.removeAppearanceDocument(window.document);
+		}));
+		this.register(() => {
+			for (const document of this.appearanceDocuments) this.clearAppearanceClasses(document);
+			this.appearanceDocuments.clear();
+		});
 		this.addSettingTab(new DragAndDropListsSettingTab(this.app, this));
 		const dragExtension = ViewPlugin.define(
 			(view) => new DragController(
 				view,
 				() => this.settings,
 			),
-			{ decorations: (controller) => controller.quoteHandleDecorations },
+			{ decorations: (controller) => controller.editorDecorations },
 		);
 		this.registerEditorExtension(dragExtension);
 		this.addCommand({
@@ -2054,6 +2236,61 @@ export default class DragAndDropListsPlugin extends Plugin {
 	async setCursorPlacement(cursorPlacement: CursorPlacement): Promise<void> {
 		this.settings = Object.assign({}, this.settings, { cursorPlacement });
 		await this.saveData(this.settings);
+	}
+
+	async setGreyCompletedTasks(greyCompletedTasks: boolean): Promise<void> {
+		this.settings = Object.assign({}, this.settings, { greyCompletedTasks });
+		this.applyAppearanceClasses();
+		await this.saveData(this.settings);
+	}
+
+	async setGreyNestedBullets(greyNestedBullets: boolean): Promise<void> {
+		this.settings = Object.assign({}, this.settings, { greyNestedBullets });
+		this.applyAppearanceClasses();
+		await this.saveData(this.settings);
+	}
+
+	async setShowPartialTaskProgress(showPartialTaskProgress: boolean): Promise<void> {
+		this.settings = Object.assign({}, this.settings, { showPartialTaskProgress });
+		this.applyAppearanceClasses();
+		await this.saveData(this.settings);
+	}
+
+	private addAppearanceDocument(document: Document): void {
+		this.appearanceDocuments.add(document);
+		this.applyAppearanceClassesTo(document);
+	}
+
+	private removeAppearanceDocument(document: Document): void {
+		this.clearAppearanceClasses(document);
+		this.appearanceDocuments.delete(document);
+	}
+
+	private applyAppearanceClasses(): void {
+		for (const document of this.appearanceDocuments) this.applyAppearanceClassesTo(document);
+	}
+
+	private applyAppearanceClassesTo(document: Document): void {
+		document.body.classList.toggle(
+			"drag-and-drop-lists-grey-completed",
+			this.settings.greyCompletedTasks,
+		);
+		document.body.classList.toggle(
+			"drag-and-drop-lists-grey-nested",
+			this.settings.greyNestedBullets,
+		);
+		document.body.classList.toggle(
+			"drag-and-drop-lists-show-partial-progress",
+			this.settings.showPartialTaskProgress,
+		);
+	}
+
+	private clearAppearanceClasses(document: Document): void {
+		document.body.classList.remove(
+			"drag-and-drop-lists-grey-completed",
+			"drag-and-drop-lists-grey-nested",
+			"drag-and-drop-lists-show-partial-progress",
+		);
 	}
 
 	private cycleCurrentListItemType(editor: Editor, checking: boolean): boolean {

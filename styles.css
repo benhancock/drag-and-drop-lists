@@ -45,6 +45,45 @@ body:not(.is-mobile) .markdown-source-view .task-list-label .task-list-item-chec
 	cursor: grab;
 }
 
+body.drag-and-drop-lists-grey-completed .markdown-source-view.mod-cm6
+	.cm-line.drag-and-drop-lists-completed-task {
+	color: var(--text-faint);
+	text-decoration-line: none;
+}
+
+body.drag-and-drop-lists-grey-completed .markdown-source-view.mod-cm6
+	.cm-line.drag-and-drop-lists-completed-task * {
+	color: var(--text-faint);
+	text-decoration-line: none;
+}
+
+body.drag-and-drop-lists-grey-completed .markdown-source-view.mod-cm6
+	.cm-line.drag-and-drop-lists-completed-task .task-list-label,
+body.drag-and-drop-lists-grey-completed .markdown-source-view.mod-cm6
+	.cm-line.drag-and-drop-lists-completed-task .task-list-item-checkbox {
+	color: var(--text-normal);
+}
+
+body.drag-and-drop-lists-grey-nested .markdown-source-view.mod-cm6
+	.cm-line.drag-and-drop-lists-completed-descendant,
+body.drag-and-drop-lists-grey-nested .markdown-source-view.mod-cm6
+	.cm-line.drag-and-drop-lists-completed-descendant * {
+	color: var(--text-faint);
+}
+
+body.drag-and-drop-lists-show-partial-progress .markdown-source-view.mod-cm6
+	.cm-line.drag-and-drop-lists-partial-task .task-list-item-checkbox:not(:checked)::after {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 76%;
+	height: 2px;
+	transform: translate(-50%, -50%) rotate(-45deg);
+	border-radius: var(--radius-s);
+	background-color: var(--checkbox-color, var(--interactive-accent));
+}
+
 .cm-editor.drag-and-drop-lists-active,
 .cm-editor.drag-and-drop-lists-active * {
 	cursor: grabbing;
@@ -92,6 +131,7 @@ body:not(.is-mobile) .markdown-source-view .task-list-label .task-list-item-chec
 	pointer-events: auto;
 	transition:
 		translate 140ms cubic-bezier(0.2, 0, 0, 1),
+		width 140ms cubic-bezier(0.2, 0, 0, 1),
 		height 140ms cubic-bezier(0.2, 0, 0, 1);
 	z-index: 1;
 }

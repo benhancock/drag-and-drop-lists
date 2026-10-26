@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
 	changeListItemStatus,
+	classifyCompletedListLines,
 	cycleListItemStatus,
+	cycleMinimalTaskStatus,
 	findContainingListBlock,
 	findListBlock,
 	findSiblingListBlock,
@@ -61,6 +63,85 @@ describe("changeListItemStatus", () => {
 	});
 });
 
+describe("classifyCompletedListLines", () => {
+	it("finds unchecked parent tasks with completed nested subtasks", () => {
+		const result = classifyCompletedListLines([
+			"- [ ] Parent",
+			"  - [ ] Incomplete child",
+			"    - [x] Completed grandchild",
+			"  - Detail",
+			"- [ ] Unrelated task",
+		]);
+		expect([...result.partiallyCompletedTaskLineIndexes]).toEqual([0, 1]);
+	});
+
+	it("does not mark completed parents or tasks separated by a list boundary as partial", () => {
+		const result = classifyCompletedListLines([
+			"- [x] Completed parent",
+			"  - [x] Completed child",
+			"- [?] Custom-status parent",
+			"  - [x] Completed custom-status child",
+			"- [ ] Parent without progress",
+			"",
+			"  - [x] Detached task",
+		]);
+		expect([...result.partiallyCompletedTaskLineIndexes]).toEqual([]);
+	});
+
+	it("finds completed tasks and their nested dash bullets", () => {
+		const result = classifyCompletedListLines([
+			"- [x] Parent",
+			"  - Detail",
+			"    - Deeper detail",
+			"- Sibling",
+		]);
+		expect([...result.completedTaskLineIndexes]).toEqual([0]);
+		expect([...result.completedDescendantBulletLineIndexes]).toEqual([1, 2]);
+	});
+
+	it("does not fade bullets beneath an intervening incomplete task", () => {
+		const result = classifyCompletedListLines([
+			"- [x] Parent",
+			"  - [ ] Incomplete child",
+			"    - Still active",
+			"  - Parent detail",
+		]);
+		expect([...result.completedDescendantBulletLineIndexes]).toEqual([3]);
+	});
+
+	it("supports uppercase completion and ignores other task states", () => {
+		const result = classifyCompletedListLines([
+			"- [X] Uppercase",
+			"  - Muted",
+			"- [?] Question",
+			"  - Not muted",
+		]);
+		expect([...result.completedTaskLineIndexes]).toEqual([0]);
+		expect([...result.completedDescendantBulletLineIndexes]).toEqual([1]);
+	});
+
+	it("only classifies ordinary dash bullets", () => {
+		const result = classifyCompletedListLines([
+			"- [x] Parent",
+			"  * Star bullet",
+			"  + Plus bullet",
+			"  1. Ordered item",
+			"  - Dash bullet",
+		]);
+		expect([...result.completedDescendantBulletLineIndexes]).toEqual([4]);
+	});
+
+	it("stops inherited completion at non-list content and quote boundaries", () => {
+		const result = classifyCompletedListLines([
+			"- [x] Parent",
+			"",
+			"  - Detached after blank",
+			"> - Quoted bullet",
+		]);
+		expect([...result.completedDescendantBulletLineIndexes]).toEqual([]);
+	});
+});
+
 describe("cycleListItemStatus", () => {
 	it("cycles through every supported list-item type and back to a bullet", () => {
 		const expected = [
@@ -86,6 +167,30 @@ describe("cycleListItemStatus", () => {
 		expect(cycleListItemStatus("- [X] Finished")).toBe("- [/] Finished");
 		expect(cycleListItemStatus("- [~] Custom")).toBe("- Custom");
 		expect(cycleListItemStatus("Paragraph")).toBeNull();
+	});
+});
+
+describe("cycleMinimalTaskStatus", () => {
+	it("cycles existing tasks through Minimal's documented task states", () => {
+		const expectedStatuses = [
+			"/", "x", "-", ">", "<", "?", "!", "*", "\"", "l", "b",
+			"i", "S", "I", "p", "c", "f", "k", "w", "u", "d", " ",
+		];
+		let line = "- [ ] Item";
+		for (const status of expectedStatuses) {
+			line = cycleMinimalTaskStatus(line) ?? "";
+			expect(parseListLine(line)?.taskStatus).toBe(status);
+		}
+	});
+
+	it("normalizes uppercase completion and starts unknown statuses at to-do", () => {
+		expect(cycleMinimalTaskStatus("- [X] Finished")).toBe("- [-] Finished");
+		expect(cycleMinimalTaskStatus("- [~] Custom")).toBe("- [ ] Custom");
+	});
+
+	it("does not convert ordinary bullets or prose into tasks", () => {
+		expect(cycleMinimalTaskStatus("- Bullet")).toBeNull();
+		expect(cycleMinimalTaskStatus("Paragraph")).toBeNull();
 	});
 });
 

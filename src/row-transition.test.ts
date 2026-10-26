@@ -6,6 +6,7 @@ import {
 	calculateGhostPickup,
 	calculateGhostRowAlignment,
 	calculateListProjection,
+	calculatePlaceholderHorizontalGeometry,
 	calculateProjectedLandingTarget,
 	calculateProjectionDeltas,
 	calculateRowDeltas,
@@ -28,6 +29,40 @@ describe("calculateListProjection", () => {
 		const projection = calculateListProjection(2, 3, 3, 148, 172, 24);
 		expect(projection.placeholderTop).toBe(148);
 		expect([0, 1, 2, 3, 4].map(projection.lineOffset)).toEqual([0, 0, 0, 0, 0]);
+	});
+});
+
+describe("calculatePlaceholderHorizontalGeometry", () => {
+	it("keeps a top-level destination at the full editor width", () => {
+		expect(calculatePlaceholderHorizontalGeometry(
+			{ left: 40, width: 600 },
+			{ left: 64 },
+			false,
+		)).toEqual({ left: 40, width: 600 });
+	});
+
+	it("moves inward and narrows for a nested destination marker", () => {
+		expect(calculatePlaceholderHorizontalGeometry(
+			{ left: 40, width: 600 },
+			{ left: 112 },
+			true,
+		)).toEqual({ left: 112, width: 528 });
+	});
+
+	it("uses the full content width when no rendered marker is available", () => {
+		expect(calculatePlaceholderHorizontalGeometry(
+			{ left: 40, width: 600 },
+			null,
+			true,
+		)).toEqual({ left: 40, width: 600 });
+	});
+
+	it("keeps malformed marker geometry within the editor", () => {
+		expect(calculatePlaceholderHorizontalGeometry(
+			{ left: 40, width: 600 },
+			{ left: 900 },
+			true,
+		)).toEqual({ left: 639, width: 1 });
 	});
 });
 
